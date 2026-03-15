@@ -10,9 +10,6 @@ from requests.auth import HTTPBasicAuth
 from datetime import datetime, timezone
 from typing import Dict, Any
 import sys
-from dotenv import load_dotenv 
-
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '../.env'))
 
 class SonarQubeExporter:
     def __init__(self, sonar_url: str, sonar_token: str, project_key: str):
@@ -154,7 +151,6 @@ class SonarQubeExporter:
         return report
 
 def main():
-    load_dotenv()
     # Configuración
     SONAR_URL = os.getenv("SONARQUBE_URL")
     SONAR_TOKEN = os.getenv("SONARQUBE_TOKEN")
