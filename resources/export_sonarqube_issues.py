@@ -8,7 +8,7 @@ import os
 import requests
 from requests.auth import HTTPBasicAuth
 from datetime import datetime, timezone
-from typing import Dict, List, Any
+from typing import Dict, Any
 import sys
 from dotenv import load_dotenv 
 
