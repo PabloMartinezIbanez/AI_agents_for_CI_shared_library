@@ -8,7 +8,7 @@ def call() {
             python3 -m venv venv
             . venv/bin/activate
             pip install -r requirements.txt
-            python export_sonarqube_issues.py
+            python export_sonarqube_issues.py > /dev/null 2>&1
         '''
     }
 }
