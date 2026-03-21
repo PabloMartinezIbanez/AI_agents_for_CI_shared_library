@@ -57,7 +57,7 @@ def call(Map config = [:]) {
         // ── 6. Ejecutar el script con credenciales inyectadas ──
         withCredentials([
             string(credentialsId: llmCredentialId, variable: 'LLM_API_KEY_VALUE'),
-            string(credentialsId: githubCredentialId, variable: 'GITHUB_TOKEN')
+            string(credentialsId: githubCredentialId, variable: 'Github_AI_Auth')
         ]) {
             // Configurar git para commits
             sh '''
