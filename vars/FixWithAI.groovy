@@ -89,12 +89,20 @@ def call(Map config = [:]) {
 
             // Determinar la variable de entorno correcta para el proveedor del LLM
             // litellm lee automáticamente OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, etc.
-            // Detectamos el proveedor por el prefijo del modelo
+            // Detectamos el proveedor por el prefijo del modelo.
+            // Para Gemini: si el modelo no lleva prefijo proveedor (ej. "gemini-2.0-flash"),
+            // añadimos "gemini/" para que litellm use Google AI Studio (API key)
+            // en lugar de Vertex AI (que requiere ADC / service account de Google Cloud).
             def envKeyName = 'OPENAI_API_KEY'
+            def resolvedModel = llmModel
             if (llmModel.startsWith('claude') || llmModel.startsWith('anthropic/')) {
                 envKeyName = 'ANTHROPIC_API_KEY'
             } else if (llmModel.startsWith('gemini/') || llmModel.startsWith('google/')) {
                 envKeyName = 'GEMINI_API_KEY'
+            } else if (llmModel.startsWith('gemini-') || llmModel.startsWith('gemini_')) {
+                // Modelo Gemini sin prefijo de proveedor → forzar Google AI Studio
+                envKeyName = 'GEMINI_API_KEY'
+                resolvedModel = "gemini/${llmModel}"
             } else if (llmModel.startsWith('ollama/') || llmModel.startsWith('ollama_chat/')) {
                 envKeyName = 'OLLAMA_API_KEY'
             }
@@ -104,7 +112,7 @@ def call(Map config = [:]) {
                 . .ai_fixer/venv/bin/activate
                 pip install -r .ai_fixer/requirements-ai.txt > /dev/null 2>&1
 
-                export LLM_MODEL='${llmModel}'
+                export LLM_MODEL='${resolvedModel}'
                 export ${envKeyName}="\${LLM_API_KEY_VALUE}"
 
                 python3 .ai_fixer/ai_fixer.py \
