@@ -230,8 +230,8 @@ def call_llm(prompt, model):
 
 TEST_SOURCE_MAP = {
     # test_file -> source_file (patrones comunes)
-    "test.py": "suma.py",
-    "test.js": "prueba.js",
+    "test_suma.py": "src/calculator/suma.py",
+    "test_prueba.js": "src/calculator/prueba.js",
 }
 
 
