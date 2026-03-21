@@ -8,6 +8,7 @@ import os
 import requests
 from requests.auth import HTTPBasicAuth
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Dict, Any
 import sys
 
@@ -168,8 +169,11 @@ def main():
         print(f"❌ Error fatal: {e}", file=sys.stderr)
         sys.exit(1)
     
-    # Guardar reporte
-    output_file = 'sonarqube-issues.json'
+    # Guardar reporte en carpeta configurable
+    output_dir = os.getenv("SONARQUBE_REPORT_OUTPUT_DIR", ".")
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    output_file = Path(output_dir) / "sonarqube-issues.json"
+
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(report, f, indent=2, ensure_ascii=False)
     
