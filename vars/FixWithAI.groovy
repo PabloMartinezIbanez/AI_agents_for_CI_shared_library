@@ -13,10 +13,27 @@ def call(Map config = [:]) {
         def aiRequirements  = libraryResource 'scripts/requirements-ai.txt'
 
         writeFile file: '.ai_fixer/ai_fixer.py', text: aiFixerScript
+        
         writeFile file: '.ai_fixer/requirements-ai.txt', text: aiRequirements
 
         // ── 2. Determinar rama actual ──
-        def sourceBranch = sh(script: 'git rev-parse --abbrev-ref HEAD', returnStdout: true).trim()
+        // En Jenkins puede haber detached HEAD; priorizamos variables del job.
+        def sourceBranch = env.CHANGE_BRANCH ?: env.BRANCH_NAME ?: env.GIT_LOCAL_BRANCH ?: ''
+        if (!sourceBranch?.trim()) {
+            sourceBranch = env.GIT_BRANCH ?: ''
+        }
+        if (sourceBranch?.startsWith('origin/')) {
+            sourceBranch = sourceBranch - 'origin/'
+        }
+        if (!sourceBranch?.trim() || sourceBranch == 'HEAD') {
+            sourceBranch = sh(
+                script: "git symbolic-ref --short -q HEAD || git branch --contains HEAD --format='%(refname:short)' | head -n 1 || git rev-parse --abbrev-ref HEAD",
+                returnStdout: true
+            ).trim()
+        }
+        if (!sourceBranch?.trim() || sourceBranch == 'HEAD') {
+            error 'No se pudo determinar la rama fuente. Define BRANCH_NAME/CHANGE_BRANCH o pasa sourceBranch explícitamente.'
+        }
         echo "🔀 Rama actual: ${sourceBranch}"
 
         // ── 3. Inferir repo slug si no se proporcionó ──

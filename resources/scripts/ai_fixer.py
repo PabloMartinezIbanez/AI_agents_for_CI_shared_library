@@ -116,7 +116,6 @@ def detect_and_parse(filepath):
         return {}
 
     suffix = path.suffix.lower()
-    name = path.name.lower()
 
     if suffix == ".xml":
         print(f"  📄 Parseando JUnit XML: {filepath}", file=sys.stderr)
@@ -393,7 +392,7 @@ def main():
     args = parser.parse_args()
 
     workspace = os.path.abspath(args.workspace)
-    model = os.environ.get("LLM_MODEL", "gpt-4o")
+    model = os.environ.get("LLM_MODEL", "gemini-3.1-pro-preview")
     github_token = os.environ.get("GITHUB_TOKEN", "")
 
     print("=" * 60, file=sys.stderr)
