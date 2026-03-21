@@ -67,7 +67,7 @@ def call(Map config = [:]) {
 
             // Configurar push con token
             sh """
-                git remote set-url origin https://x-access-token:\${GITHUB_TOKEN}@github.com/${repoSlug}.git
+                git remote set-url origin https://x-access-token:\${Github_AI_Auth}@github.com/${repoSlug}.git
             """
 
             // Determinar la variable de entorno correcta para el proveedor del LLM
