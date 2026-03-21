@@ -2,7 +2,7 @@ def call(Map config = [:]) {
     // ── Parámetros con valores por defecto ──
     def reportsDir    = config.reportsDir    ?: (env.AI_REPORTS_DIR ?: 'reports_for_IA')
     def llmModel      = config.llmModel      ?: 'gpt-4o'
-    def llmCredentialId    = config.llmCredentialId    ?: 'LLM_API_KEY'
+    def llmCredentialId    = config.llmCredentialId    ?: 'Gemini_Api_token'
     def githubCredentialId = config.githubCredentialId ?: 'GITHUB_PAT'
     def repoSlug      = config.repoSlug      ?: ''
     def dryRun        = config.dryRun        ?: false
