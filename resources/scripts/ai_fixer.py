@@ -393,7 +393,7 @@ def main():
 
     workspace = os.path.abspath(args.workspace)
     model = os.environ.get("LLM_MODEL", "gemini-3.1-pro-preview")
-    github_token = os.environ.get("GITHUB_TOKEN", "")
+    github_token = os.environ.get("Github_AI_Auth", "")
 
     print("=" * 60, file=sys.stderr)
     print("🤖  AI Code Fixer", file=sys.stderr)
