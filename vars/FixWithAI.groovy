@@ -1,6 +1,6 @@
 def call(Map config = [:]) {
     // ── Parámetros con valores por defecto ──
-    def llmModel      = config.llmModel      ?: 'gpt-4o'
+    def llmModel      = config.llmModel      ?: 'gemini-3.1-pro-preview'
     def llmCredentialId    = config.llmCredentialId    ?: 'Gemini_Api_token'
     def githubCredentialId = config.githubCredentialId ?: 'GITHUB_PAT'
     def repoSlug      = config.repoSlug      ?: ''
