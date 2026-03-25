@@ -108,8 +108,16 @@ def build_server_configs(workspace, sonarqube_url, sonarqube_token, sonarqube_pr
 async def connect_servers(server_configs, exit_stack):
     """Connect to all MCP servers and return {name: session} + merged tool list."""
     sessions = {}
-    all_tools = []
+    all_tools_by_name = {}
+    tool_owner = {}
     tool_to_session = {}
+
+    # Higher number means higher priority when two servers expose same tool name.
+    server_priority = {
+        "github": 30,
+        "sonarqube": 20,
+        "filesystem": 10,
+    }
 
     for name, params in server_configs.items():
         log(f"🔌 Connecting to MCP server: {name}...")
@@ -129,12 +137,32 @@ async def connect_servers(server_configs, exit_stack):
             server_tools = response.tools
             log(f"   ✅ {name}: {len(server_tools)} tools discovered")
             for tool in server_tools:
-                log(f"      - {tool.name}")
-                all_tools.append(tool)
-                tool_to_session[tool.name] = session
+                existing_owner = tool_owner.get(tool.name)
+                if existing_owner is None:
+                    log(f"      - {tool.name}")
+                    all_tools_by_name[tool.name] = tool
+                    tool_owner[tool.name] = name
+                    tool_to_session[tool.name] = session
+                    continue
+
+                current_prio = server_priority.get(existing_owner, 0)
+                new_prio = server_priority.get(name, 0)
+
+                if new_prio > current_prio:
+                    log(
+                        f"      - {tool.name} (replacing {existing_owner} with {name} due to higher priority)"
+                    )
+                    all_tools_by_name[tool.name] = tool
+                    tool_owner[tool.name] = name
+                    tool_to_session[tool.name] = session
+                else:
+                    log(
+                        f"      - {tool.name} (skipping duplicate from {name}; keeping {existing_owner})"
+                    )
         except Exception as e:
             log(f"   ❌ Failed to connect to {name}: {e}")
 
+    all_tools = list(all_tools_by_name.values())
     return sessions, all_tools, tool_to_session
 
 
