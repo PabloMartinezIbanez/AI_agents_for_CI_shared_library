@@ -12,7 +12,7 @@ def call(Map config = [:]) {
             . venv/bin/activate
             pip install -r .sonnarqube/requirements-sonnarqube.txt
             export SONARQUBE_REPORT_OUTPUT_DIR='${outputDir}'
-            python .sonnarqube/export_sonarqube_issues.py > /dev/null 2>&1
+            python .sonnarqube/export_sonarqube_issues.py
         """
     }
 }
