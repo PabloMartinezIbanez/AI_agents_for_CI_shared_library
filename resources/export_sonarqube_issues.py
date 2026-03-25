@@ -155,7 +155,7 @@ def main():
     # Configuración
     SONAR_URL = os.getenv("SONARQUBE_URL")
     SONAR_TOKEN = os.getenv("SONARQUBE_TOKEN")
-    PROJECT_KEY = os.getenv("SONARQUBE_PROJECT_KEY")
+    PROJECT_KEY = os.getenv("SONARQUBE_EFFECTIVE_PROJECT_KEY")
     
     print("🔍 Extrayendo issues de SonarQube...", file=sys.stderr)
     print(f"   URL: {SONAR_URL}", file=sys.stderr)
