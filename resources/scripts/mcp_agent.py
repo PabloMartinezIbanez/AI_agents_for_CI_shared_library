@@ -57,6 +57,7 @@ def build_server_configs(workspace, sonarqube_url, sonarqube_token, sonarqube_pr
         return raw_url
 
     # --- SonarQube MCP Server (Docker) ---
+    sonarqube_container = f"mcp-sonarqube-{os.getpid()}"
     if sonarqube_url and sonarqube_token:
         docker_sonarqube_url = _normalize_url_for_docker(sonarqube_url)
         servers["sonarqube"] = StdioServerParameters(
@@ -64,6 +65,7 @@ def build_server_configs(workspace, sonarqube_url, sonarqube_token, sonarqube_pr
             args=[
                 "run", "-i", "--rm", "--init",
                 "--pull=always",
+                "--name", sonarqube_container,
                 "--add-host", "host.docker.internal:host-gateway",
                 "-e", "SONARQUBE_TOKEN",
                 "-e", "SONARQUBE_URL",
@@ -76,6 +78,7 @@ def build_server_configs(workspace, sonarqube_url, sonarqube_token, sonarqube_pr
             },
         )
     else:
+        sonarqube_container = None
         log("⚠️  SonarQube credentials not provided, skipping SonarQube MCP server")
 
     # --- Filesystem MCP Server (npx) ---
@@ -98,7 +101,7 @@ def build_server_configs(workspace, sonarqube_url, sonarqube_token, sonarqube_pr
     else:
         log("⚠️  GitHub token not provided, skipping GitHub MCP server")
 
-    return servers
+    return servers, sonarqube_container
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +213,7 @@ You have access to MCP tools connected to:
    - Preserve coding style, indentation, and comments.
    - Do NOT change logic unless required to fix an issue.
 4. **Create a PR**: Once all fixes are applied:
-   - Use `create_branch` to create a new branch named `ai-fix/{source_branch}-{timestamp}`.
+   - Use `create_branch` to create a new branch named `ai-fix/{source_branch}-{date}` (date = YYYYMMDD).
    - Use `push_files` to push ALL modified files in a single commit.
    - Use `create_pull_request` to open a PR with a descriptive body listing all fixed issues.
 
@@ -231,7 +234,7 @@ async def run_agent_loop(tool_to_session, openai_tools, model, system_prompt,
     import litellm
 
     owner, repo = repo_slug.split("/", 1)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    date_tag = datetime.now(timezone.utc).strftime("%Y%m%d")
 
     # Initial user message with context
     user_message = f"""Fix all code quality issues in the project and create a Pull Request.
@@ -240,8 +243,8 @@ Context:
 - SonarQube project key: `{sonarqube_project_key}`
 - GitHub repository: `{owner}/{repo}`
 - Source branch: `{source_branch}`
-- Branch for fixes: `ai-fix/{source_branch}-{timestamp}`
-- Timestamp: {timestamp}
+- Branch for fixes: `ai-fix/{source_branch}-{date_tag}`
+- Date tag: {date_tag}
 - Dry run: {dry_run}
 
 {"NOTE: This is a DRY RUN. Do NOT create branches, push files, or create pull requests. Only discover issues and propose fixes." if dry_run else "Proceed with the full workflow: discover issues, fix files, and create a PR."}
@@ -290,6 +293,13 @@ Start by querying SonarQube for open issues in the project."""
                 func_args = json.loads(tool_call.function.arguments)
             except json.JSONDecodeError:
                 func_args = {}
+
+            # Inject committer identity for push_files calls
+            if func_name == "push_files":
+                func_args["committer"] = {
+                    "name": "Jenkins AI Bot",
+                    "email": "jenkins-ai@noreply.github.com",
+                }
 
             log(f"\n🔧 Tool call: {func_name}")
             log(f"   Args: {json.dumps(func_args, indent=2)[:500]}")
@@ -375,7 +385,7 @@ async def async_main(args):
         sys.exit(1)
 
     # --- Build server configs ---
-    server_configs = build_server_configs(
+    server_configs, sonarqube_container = build_server_configs(
         workspace=workspace,
         sonarqube_url=sonarqube_url,
         sonarqube_token=sonarqube_token,
@@ -434,6 +444,20 @@ async def async_main(args):
         )
 
         log(f"\n✅ Agent completed. Total messages exchanged: {len(messages)}")
+
+        # --- Graceful SonarQube Docker shutdown ---
+        if sonarqube_container:
+            log(f"\n🛑 Stopping SonarQube Docker container: {sonarqube_container}")
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "docker", "stop", "--time", "5", sonarqube_container,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await proc.wait()
+                log("   ✅ SonarQube container stopped gracefully")
+            except Exception as e:
+                log(f"   ⚠️  Could not stop SonarQube container: {e}")
 
 
 def main():

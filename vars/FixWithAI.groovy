@@ -42,6 +42,12 @@ def call(Map config = [:]) {
         }
         echo "🔀 Rama actual: ${sourceBranch}"
 
+        // ── 2b. Evitar bucle infinito: no ejecutar FixWithAI en ramas creadas por la IA ──
+        if (sourceBranch.startsWith('ai-fix/')) {
+            echo "⏭️  Rama '${sourceBranch}' fue creada por la IA. Se omite FixWithAI para evitar bucle infinito."
+            return
+        }
+
         // ── 3. Inferir repo slug si no se proporcionó ──
         if (!repoSlug) {
             def remoteUrl = sh(script: 'git remote get-url origin', returnStdout: true).trim()
