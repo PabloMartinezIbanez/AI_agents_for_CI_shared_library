@@ -3,9 +3,6 @@
 MCP AI Agent — Agente autónomo que usa MCP servers (SonarQube, Filesystem,
 GitHub) para descubrir issues, leer/corregir código, y crear PRs.
 
-A diferencia de ai_fixer.py (script lineal), aquí el LLM razona en un loop
-y decide qué herramientas usar en cada paso.
-
 Uso:
     python mcp_agent.py --repo owner/repo --source-branch main --workspace /path
 
@@ -50,7 +47,7 @@ def build_server_configs(workspace, sonarqube_url, sonarqube_token, sonarqube_pr
             env={
                 **os.environ,
                 "SONARQUBE_TOKEN": sonarqube_token,
-                "SONARQUBE_URL": sonarqube_url,
+                "SONARQUBE_URL": 'http://sonarqube:9000',  # El agente dentro de Docker se conecta a SonarQube por este host
             },
         )
     else:
@@ -303,13 +300,11 @@ def log(msg):
 
 async def async_main(args):
     workspace = os.path.abspath(args.workspace)
-    model = os.environ.get("LLM_MODEL", "gpt-4o")
-    github_token = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN",
-                   os.environ.get("Github_AI_Auth", ""))
+    model = os.environ.get("LLM_MODEL", "gemini-3.1-pro-preview")
+    github_token = os.environ.get("Github_AI_Auth", "")
     sonarqube_url = os.environ.get("SONARQUBE_URL", "")
     sonarqube_token = os.environ.get("SONARQUBE_TOKEN", "")
-    sonarqube_project_key = os.environ.get("SONARQUBE_EFFECTIVE_PROJECT_KEY",
-                            os.environ.get("SONARQUBE_PROJECT_KEY", ""))
+    sonarqube_project_key = os.environ.get("SONARQUBE_EFFECTIVE_PROJECT_KEY","")
 
     log("=" * 60)
     log("🤖  MCP AI Agent")
