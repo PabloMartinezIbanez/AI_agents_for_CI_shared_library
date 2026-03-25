@@ -16,6 +16,7 @@ import os
 import sys
 from contextlib import AsyncExitStack
 from datetime import datetime, timezone
+from urllib.parse import urlparse, urlunparse
 
 # ---------------------------------------------------------------------------
 # MCP SDK imports
@@ -33,13 +34,37 @@ def build_server_configs(workspace, sonarqube_url, sonarqube_token, sonarqube_pr
     """Define the MCP servers to connect to (same ones as in VS Code mcp.json)."""
     servers = {}
 
+    def _normalize_url_for_docker(raw_url):
+        """Map localhost-style URLs to a host reachable from inside Docker."""
+        try:
+            parsed = urlparse(raw_url)
+            host = parsed.hostname or ""
+            if host in ("localhost", "127.0.0.1", "sonarqube"):
+                netloc = parsed.netloc.replace(host, "host.docker.internal", 1)
+                mapped = urlunparse((
+                    parsed.scheme,
+                    netloc,
+                    parsed.path,
+                    parsed.params,
+                    parsed.query,
+                    parsed.fragment,
+                ))
+                log(f"ℹ️  Rewriting SONARQUBE_URL for Docker: {raw_url} -> {mapped}")
+                return mapped
+        except Exception:
+            # Keep original URL if parsing fails.
+            return raw_url
+        return raw_url
+
     # --- SonarQube MCP Server (Docker) ---
     if sonarqube_url and sonarqube_token:
+        docker_sonarqube_url = _normalize_url_for_docker(sonarqube_url)
         servers["sonarqube"] = StdioServerParameters(
             command="docker",
             args=[
                 "run", "-i", "--rm", "--init",
                 "--pull=always",
+                "--add-host", "host.docker.internal:host-gateway",
                 "-e", "SONARQUBE_TOKEN",
                 "-e", "SONARQUBE_URL",
                 "mcp/sonarqube",
@@ -47,7 +72,7 @@ def build_server_configs(workspace, sonarqube_url, sonarqube_token, sonarqube_pr
             env={
                 **os.environ,
                 "SONARQUBE_TOKEN": sonarqube_token,
-                "SONARQUBE_URL": 'http://sonarqube:9000',  # El agente dentro de Docker se conecta a SonarQube por este host
+                "SONARQUBE_URL": docker_sonarqube_url,
             },
         )
     else:
@@ -340,6 +365,11 @@ async def async_main(args):
         sessions, all_tools, tool_to_session = await connect_servers(
             server_configs, exit_stack
         )
+
+        if "sonarqube" not in sessions:
+            log("❌ SonarQube MCP server did not connect. Check SONARQUBE_URL reachability from Docker.")
+            log("   Tip: if SonarQube runs on Jenkins host, use SONARQUBE_URL=http://host.docker.internal:9000")
+            sys.exit(1)
 
         if not all_tools:
             log("❌ No tools discovered from any MCP server. Cannot proceed.")
