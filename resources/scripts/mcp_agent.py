@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 MCP AI Agent — Agente autónomo que usa MCP servers (SonarQube, Filesystem,
-GitHub) para descubrir issues, leer/corregir código, y crear PRs.
+GitHub, Test Runner) para descubrir issues, leer/corregir código, validar
+tests y crear PRs.
 
 Uso:
     python mcp_agent.py --repo owner/repo --source-branch main --workspace /path
@@ -33,6 +34,7 @@ def build_server_configs(workspace, sonarqube_url, sonarqube_token, sonarqube_pr
                          github_token):
     """Define the MCP servers to connect to (same ones as in VS Code mcp.json)."""
     servers = {}
+    test_runner_script = os.path.join(workspace, ".ai_fixer", "mcp_servers", "test_runner_server.py")
 
     def _normalize_url_for_docker(raw_url):
         """Map localhost-style URLs to a host reachable from inside Docker."""
@@ -88,6 +90,19 @@ def build_server_configs(workspace, sonarqube_url, sonarqube_token, sonarqube_pr
         env={**os.environ},
     )
 
+    # --- Test Runner MCP Server (local Python) ---
+    if os.path.isfile(test_runner_script):
+        servers["test_runner"] = StdioServerParameters(
+            command=sys.executable,
+            args=[test_runner_script],
+            env={
+                **os.environ,
+                "WORKSPACE_ROOT": workspace,
+            },
+        )
+    else:
+        log(f"⚠️  Test Runner MCP server not found at {test_runner_script}, skipping Test Runner MCP server")
+
     # --- GitHub MCP Server (npx) ---
     if github_token:
         servers["github"] = StdioServerParameters(
@@ -119,6 +134,7 @@ async def connect_servers(server_configs, exit_stack):
     server_priority = {
         "github": 30,
         "sonarqube": 20,
+        "test_runner": 15,
         "filesystem": 10,
     }
 
@@ -199,6 +215,7 @@ Your goal is to fix code quality issues and create a Pull Request with the fixes
 You have access to MCP tools connected to:
 - **SonarQube**: Query code issues, security hotspots, and quality metrics
 - **Filesystem**: Read and write files in the project workspace
+- **Test Runner**: Detect available test frameworks and run Python or Node.js tests
 - **GitHub**: Create branches, push files, and create pull requests
 
 ## Workflow
@@ -212,7 +229,12 @@ You have access to MCP tools connected to:
    - Fix ALL issues in a file before moving to the next file.
    - Preserve coding style, indentation, and comments.
    - Do NOT change logic unless required to fix an issue.
-4. **Create a PR**: Once all fixes are applied:
+4. **Validate the changes**: Before creating a PR, verify whether tests can be executed.
+    - Use `detect_test_framework` to discover available test frameworks.
+    - If Python tests are available, use `run_pytest`.
+    - If Node.js tests are available, use `run_node_tests`.
+    - Include the validation outcome in your final summary, even if no tests are detected.
+5. **Create a PR**: Once all fixes are applied:
    - Use `create_branch` to create a new branch named `ai-fix/{source_branch}-{date}` (date = YYYYMMDD).
    - Use `push_files` to push ALL modified files in a single commit.
    - Use `create_pull_request` to open a PR with a descriptive body listing all fixed issues.
@@ -222,6 +244,7 @@ You have access to MCP tools connected to:
 - If a file has no fixable issues, skip it.
 - If you're unsure about a fix, skip that issue and note it in the PR body.
 - The PR body should list every issue you fixed, grouped by file.
+- If tests can be executed, run them before creating the PR and summarize the result.
 - Include a warning that changes should be reviewed before merging.
 - Always use the exact file paths as reported by SonarQube (relative to project root).
 """
