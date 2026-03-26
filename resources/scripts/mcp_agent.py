@@ -260,6 +260,9 @@ async def run_agent_loop(tool_to_session, openai_tools, model, system_prompt,
     """Run the agent reasoning loop: LLM decides → call tool → observe → repeat."""
     import litellm
 
+    # Ensure timeout is honoured by all providers (some ignore the parameter)
+    os.environ.setdefault("LITELLM_REQUEST_TIMEOUT", "300")
+
     owner, repo = repo_slug.split("/", 1)
     date_tag = datetime.now(timezone.utc).strftime("%Y%m%d")
 
@@ -288,18 +291,19 @@ Start by querying SonarQube for open issues in the project."""
         log(f"🔄 Iteration {iteration}/{max_iterations}")
         log(f"{'─' * 50}")
 
-        # Call LLM with tools
+        # Call LLM with tools (5 min timeout, 2 automatic retries on transient errors)
         try:
             response = litellm.completion(
                 model=model,
                 messages=messages,
                 tools=openai_tools if openai_tools else None,
                 temperature=0.1,
-                timeout=120,
+                timeout=300,
+                num_retries=2,
                 user="jenkins-pipeline-agent",
             )
         except Exception as e:
-            log(f"❌ LLM call failed: {e}")
+            log(f"❌ LLM call failed after retries: {e}")
             raise RuntimeError(f"LLM call failed: {e}") from e
 
         choice = response.choices[0]
