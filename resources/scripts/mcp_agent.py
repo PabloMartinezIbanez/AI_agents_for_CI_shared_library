@@ -408,7 +408,7 @@ def log(msg):
 
 async def async_main(args):
     workspace = os.path.abspath(args.workspace)
-    model = os.environ.get("LLM_MODEL", "gemini-3.1-pro-preview")
+    model = args.model or os.environ.get("LLM_MODEL") or "gemini/gemini-2.0-flash"
     github_token = os.environ.get("Github_AI_Auth", "")
     sonarqube_url = os.environ.get("SONARQUBE_URL", "")
     sonarqube_token = os.environ.get("SONARQUBE_TOKEN", "")
@@ -529,6 +529,7 @@ async def async_main(args):
 def main():
     parser = argparse.ArgumentParser(description="MCP AI Agent — Fix code issues using MCP tools")
     parser.add_argument("--repo", required=True, help="GitHub repo slug (owner/repo)")
+    parser.add_argument("--model", default=None, help="LLM model name for litellm (e.g. gemini/gemini-2.0-flash). Overrides LLM_MODEL env var.")
     parser.add_argument("--source-branch", required=True, help="Current branch name")
     parser.add_argument("--workspace", default=".", help="Path to the workspace root")
     parser.add_argument("--max-iterations", type=int, default=25, help="Max agent loop iterations")

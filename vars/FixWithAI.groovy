@@ -110,7 +110,8 @@ def call(Map config = [:]) {
                 export SONARQUBE_EFFECTIVE_PROJECT_KEY='${sonarqubeProjectKey}'
 
                 python3 .ai_fixer/mcp_agent.py \
-                    --repo '${repoSlug}' \
+                    --repo '${repoSlug}' \                   
+                    --model '${resolvedModel}' \\                    
                     --source-branch '${sourceBranch}' \
                     --workspace '${env.WORKSPACE}' \
                     --max-iterations ${maxIterations} \
