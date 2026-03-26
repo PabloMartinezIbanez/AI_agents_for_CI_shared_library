@@ -229,10 +229,9 @@ You have access to MCP tools connected to:
    - Fix ALL issues in a file before moving to the next file.
    - Preserve coding style, indentation, and comments.
    - Do NOT change logic unless required to fix an issue.
-4. **Validate the changes**: Before creating a PR, verify whether tests can be executed.
-    - Use `detect_test_framework` to discover available test frameworks.
-    - If Python tests are available, use `run_pytest`.
-    - If Node.js tests are available, use `run_node_tests`.
+4. **Validate the changes**: Before creating a PR, try to run available tests.
+    - Try `run_pytest` to run Python tests. If the command is not found, skip.
+    - Try `run_node_tests` to run Node.js tests. If the command is not found, skip.
     - Include the validation outcome in your final summary, even if no tests are detected.
 5. **Create a PR**: Once all fixes are applied:
    - Use `create_branch` to create a new branch named `ai-fix/{source_branch}-{date}` (date = YYYYMMDD).
@@ -295,6 +294,7 @@ Start by querying SonarQube for open issues in the project."""
                 tools=openai_tools if openai_tools else None,
                 temperature=0.1,
                 timeout=120,
+                user="jenkins-pipeline-agent",
             )
         except Exception as e:
             log(f"❌ LLM call failed: {e}")

@@ -16,7 +16,6 @@ import json
 import os
 import subprocess
 import sys
-from pathlib import Path
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -94,14 +93,6 @@ async def list_tools():
                 },
             },
         ),
-        Tool(
-            name="detect_test_framework",
-            description="Detect which test framework(s) are available in the workspace by checking for pytest, package.json scripts, etc.",
-            inputSchema={
-                "type": "object",
-                "properties": {},
-            },
-        ),
     ]
 
 
@@ -135,31 +126,6 @@ async def call_tool(name: str, arguments: dict):
             cmd = ["npm", "test"]
         result = _run_command(cmd, cwd=workspace)
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
-
-    elif name == "detect_test_framework":
-        frameworks = []
-
-        # Check pytest
-        pytest_check = _run_command([sys.executable, "-m", "pytest", "--version"], cwd=workspace, timeout=10)
-        if pytest_check["returncode"] == 0:
-            frameworks.append("pytest")
-
-        # Check package.json for test script
-        pkg_json = Path(workspace) / "package.json"
-        if pkg_json.exists():
-            try:
-                pkg = json.loads(pkg_json.read_text(encoding="utf-8"))
-                if "test" in pkg.get("scripts", {}):
-                    frameworks.append(f"npm test ({pkg['scripts']['test']})")
-                else:
-                    frameworks.append("node (no test script)")
-            except (json.JSONDecodeError, OSError):
-                pass
-
-        if not frameworks:
-            frameworks.append("none detected")
-
-        return [TextContent(type="text", text=json.dumps({"frameworks": frameworks}, indent=2))]
 
     return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
