@@ -8,11 +8,11 @@ def call(Map config = [:]) {
         writeFile file: '.sonnarqube/requirements-sonnarqube.txt', text: requirements
         sh """
             mkdir -p '${outputDir}'
-            python3 -m venv venv
-            . venv/bin/activate
-            pip install -r .sonnarqube/requirements-sonnarqube.txt
+            python3 -m venv venv > /dev/null 2>&1
+            . venv/bin/activate > /dev/null 2>&1
+            pip install -r .sonnarqube/requirements-sonnarqube.txt > /dev/null 2>&1
             export SONARQUBE_REPORT_OUTPUT_DIR='${outputDir}'
-            python .sonnarqube/export_sonarqube_issues.py
+            python .sonnarqube/export_sonarqube_issues.py > /dev/null 2>&1
         """
     }
 }

@@ -40,13 +40,14 @@ def call(Map config = [:]) {
         if (!sourceBranch?.trim() || sourceBranch == 'HEAD') {
             error 'No se pudo determinar la rama fuente. Define BRANCH_NAME/CHANGE_BRANCH o pasa sourceBranch explícitamente.'
         }
-        echo "🔀 Rama actual: ${sourceBranch}"
-
+        
         // ── 2b. Evitar bucle infinito: no ejecutar FixWithAI en ramas creadas por la IA ──
         if (sourceBranch.startsWith('ai-fix/')) {
             echo "⏭️  Rama '${sourceBranch}' fue creada por la IA. Se omite FixWithAI para evitar bucle infinito."
             return
         }
+        
+        echo "🔀 Rama actual: ${sourceBranch}"
 
         // ── 3. Inferir repo slug si no se proporcionó ──
         if (!repoSlug) {
@@ -97,8 +98,8 @@ def call(Map config = [:]) {
             echo "🤖 Using MCP Agent mode"
 
             sh """
-                python3 -m venv .ai_fixer/venv
-                . .ai_fixer/venv/bin/activate
+                python3 -m venv .ai_fixer/venv > /dev/null 2>&1
+                . .ai_fixer/venv/bin/activate > /dev/null 2>&1
                 pip install -r .ai_fixer/requirements-ai.txt > /dev/null 2>&1
 
                 export LLM_MODEL='${resolvedModel}'
