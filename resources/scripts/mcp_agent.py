@@ -141,8 +141,10 @@ async def connect_servers(server_configs, exit_stack):
     for name, params in server_configs.items():
         log(f"🔌 Connecting to MCP server: {name}...")
         try:
+            # Suppress stderr for Docker-based servers to avoid noisy pipeline logs
+            errlog = open(os.devnull, "w") if name == "sonarqube" else sys.stderr
             stdio_transport = await exit_stack.enter_async_context(
-                stdio_client(params)
+                stdio_client(params, errlog=errlog)
             )
             read_stream, write_stream = stdio_transport
             session = await exit_stack.enter_async_context(
