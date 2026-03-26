@@ -300,7 +300,7 @@ Start by querying SonarQube for open issues in the project."""
             )
         except Exception as e:
             log(f"❌ LLM call failed: {e}")
-            break
+            raise RuntimeError(f"LLM call failed: {e}") from e
 
         choice = response.choices[0]
         message = choice.message
