@@ -458,10 +458,31 @@ async def async_main(args):
             log("❌ No tools discovered from any MCP server. Cannot proceed.")
             sys.exit(1)
 
-        log(f"\n📋 Total tools available: {len(all_tools)}")
+        log(f"\n📋 Total tools discovered: {len(all_tools)}")
+
+        # Filter to only the tools the agent actually needs (reduces token usage)
+        ALLOWED_TOOLS = {
+            # SonarQube
+            "search_sonar_issues_in_projects",
+            "show_rule",
+            # Filesystem
+            "read_text_file",
+            "edit_file",
+            "write_file",
+            "read_multiple_files",
+            # Test Runner
+            "run_pytest",
+            "run_node_tests",
+            # GitHub
+            "create_branch",
+            "push_files",
+            "create_pull_request",
+        }
+        filtered_tools = [t for t in all_tools if t.name in ALLOWED_TOOLS]
+        log(f"   Filtered to {len(filtered_tools)} allowed tools: {[t.name for t in filtered_tools]}")
 
         # Convert to OpenAI format for litellm
-        openai_tools = mcp_tools_to_openai_format(all_tools)
+        openai_tools = mcp_tools_to_openai_format(filtered_tools)
 
         # --- Build system prompt with context ---
         system_prompt = SYSTEM_PROMPT + f"""
