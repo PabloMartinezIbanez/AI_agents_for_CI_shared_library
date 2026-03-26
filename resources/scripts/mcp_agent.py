@@ -321,14 +321,24 @@ Start by querying SonarQube for open issues in the project."""
             except json.JSONDecodeError:
                 func_args = {}
 
-            # Inject committer + author identity for push_files calls
+            # Inject bot identity for all GitHub write operations
+            BOT_NAME = "Jenkins AI Bot"
+            BOT_EMAIL = "jenkinai@noreply.github.com"
+            bot_identity = {"name": BOT_NAME, "email": BOT_EMAIL}
+
             if func_name == "push_files":
-                bot_identity = {
-                    "name": "Jenkins AI Bot",
-                    "email": "jenkins-ai@noreply.github.com",
-                }
+                # Attribute commits to the bot in git history
                 func_args["committer"] = bot_identity
                 func_args["author"] = bot_identity
+
+            elif func_name == "create_pull_request":
+                # Prepend bot attribution to the PR body
+                existing_body = func_args.get("body", "")
+                func_args["body"] = (
+                    f"> 🤖 This branch and PR were created automatically by **{BOT_NAME}** "
+                    f"(`{BOT_EMAIL}`) as part of the CI/CD pipeline.\n\n"
+                    f"{existing_body}"
+                )
 
             log(f"\n🔧 Tool call: {func_name}")
             log(f"   Args: {json.dumps(func_args, indent=2)[:500]}")
