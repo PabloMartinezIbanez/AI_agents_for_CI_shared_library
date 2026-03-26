@@ -237,7 +237,10 @@ You have access to MCP tools connected to:
 5. **Create a PR**: Once all fixes are applied:
    - Use `create_branch` to create a new branch named `ai-fix/{source_branch}-{date}` (date = YYYYMMDD).
    - Use `push_files` to push ALL modified files in a single commit.
-   - Use `create_pull_request` to open a PR with a descriptive body listing all fixed issues.
+    - Use `create_pull_request` to open a PR. The title MUST follow this exact format:
+      `[AI Fix][{source_branch}] {N} issue(s) fixed — {date}`
+      Where: `{N}` = total number of issues fixed, `{date}` = date tag (YYYY-MM-DD). Example:
+      `[AI Fix][main] 5 issue(s) fixed — 2026-03-26`
 
 ## Rules
 - Fix only the issues reported by SonarQube. Do not refactor or improve unrelated code.
