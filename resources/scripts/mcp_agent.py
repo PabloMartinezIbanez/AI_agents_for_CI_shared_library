@@ -294,6 +294,7 @@ Start by querying SonarQube for open issues in the project."""
                 messages=messages,
                 tools=openai_tools if openai_tools else None,
                 temperature=0.1,
+                timeout=120,
             )
         except Exception as e:
             log(f"❌ LLM call failed: {e}")
