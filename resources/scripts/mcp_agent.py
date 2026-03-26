@@ -317,12 +317,14 @@ Start by querying SonarQube for open issues in the project."""
             except json.JSONDecodeError:
                 func_args = {}
 
-            # Inject committer identity for push_files calls
+            # Inject committer + author identity for push_files calls
             if func_name == "push_files":
-                func_args["committer"] = {
+                bot_identity = {
                     "name": "Jenkins AI Bot",
                     "email": "jenkins-ai@noreply.github.com",
                 }
+                func_args["committer"] = bot_identity
+                func_args["author"] = bot_identity
 
             log(f"\n🔧 Tool call: {func_name}")
             log(f"   Args: {json.dumps(func_args, indent=2)[:500]}")
