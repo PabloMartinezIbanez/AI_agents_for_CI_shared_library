@@ -107,6 +107,18 @@ def _skip(message: str):
             "status": "skipped", "skipped": True}
 
 
+def _normalize_node_zero_tests_result(result: dict) -> dict:
+    """Treat Node.js runs with 0 executed tests as skipped instead of passed."""
+    output = result.get("output", "")
+    if "tests 0" in output and "fail 0" in output:
+        normalized = dict(result)
+        normalized["passed"] = False
+        normalized["status"] = "skipped"
+        normalized["skipped"] = True
+        return normalized
+    return result
+
+
 # ─────────────────────────────────────────────────────────────────────
 # 3. Discovery
 # ─────────────────────────────────────────────────────────────────────
@@ -189,7 +201,7 @@ def discover_node_tests(workspace: str) -> dict:
                 test_files.append(rel_file)
                 test_dirs.add(rel_root)
 
-    detected = has_package_json or bool(test_files)
+    detected = bool(test_files) or bool(test_script)
     return {
         "framework": "node",
         "detected": detected,
@@ -269,7 +281,8 @@ def run_node_tests(workspace: str, test_path: str | None = None) -> dict:
                 return _skip("node is not installed or not available on PATH")
             cmd = ["node", "--test"]
 
-    return _run_command(cmd, cwd=workspace)
+    result = _run_command(cmd, cwd=workspace)
+    return _normalize_node_zero_tests_result(result)
 
 
 # ─────────────────────────────────────────────────────────────────────
