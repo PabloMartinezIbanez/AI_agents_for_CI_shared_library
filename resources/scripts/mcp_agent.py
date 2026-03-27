@@ -217,7 +217,7 @@ Your goal is to fix code quality issues and create a Pull Request with the fixes
 You have access to MCP tools connected to:
 - **SonarQube**: Query code issues, security hotspots, and quality metrics
 - **Filesystem**: Read and write files in the project workspace
-- **Test Runner**: Detect available test frameworks and run Python or Node.js tests
+- **Test Runner**: Discover test frameworks, execute tests, and analyze failures
 - **GitHub**: Create branches, push files, and create pull requests
 
 ## Workflow
@@ -231,9 +231,15 @@ You have access to MCP tools connected to:
    - Fix ALL issues in a file before moving to the next file.
    - Preserve coding style, indentation, and comments.
    - Do NOT change logic unless required to fix an issue.
-4. **Validate the changes**: Before creating a PR, try to run available tests.
-    - Try `run_pytest` to run Python tests. If the command is not found, skip.
-    - Try `run_node_tests` to run Node.js tests. If the command is not found, skip.
+4. **Validate the changes**: Before creating a PR, run available tests.
+    - Call `discover_tests` to detect which test frameworks are available.
+    - Call `run_tests` to execute all detected frameworks (or a specific one).
+    - If any tests fail, call `analyze_failures` with the raw output to get structured
+      failure data including test name, file, line, error type, and a `likely_fault` hint.
+    - If `likely_fault` is `"source"`, the bug is in the production code you changed — fix it.
+    - If `likely_fault` is `"test"`, the test itself may be outdated or wrong — fix the test.
+    - Re-run tests after each fix until all pass (or you're confident remaining failures
+      are pre-existing and unrelated to your changes).
     - Include the validation outcome in your final summary, even if no tests are detected.
 5. **Create a PR**: Once all fixes are applied:
    - Use `create_branch` to create a new branch named `ai-fix/{source_branch}-{date}` (date = YYYYMMDD).
@@ -471,8 +477,9 @@ async def async_main(args):
             "write_file",
             "read_multiple_files",
             # Test Runner
-            "run_pytest",
-            "run_node_tests",
+            "discover_tests",
+            "run_tests",
+            "analyze_failures",
             # GitHub
             "create_branch",
             "push_files",
