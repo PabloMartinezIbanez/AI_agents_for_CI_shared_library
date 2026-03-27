@@ -333,11 +333,9 @@ Start by querying SonarQube for open issues in the project."""
             bot_identity = {"name": BOT_NAME, "email": BOT_EMAIL}
 
             if func_name == "push_files":
-                log(f"   Before updating args with bot identity: {json.dumps(func_args, indent=2)}")
                 # Attribute commits to the bot in git history
                 func_args["committer"] = bot_identity
                 func_args["author"] = bot_identity
-                log(f"   Updated args with bot identity: {json.dumps(func_args, indent=2)}")
 
             elif func_name == "create_pull_request":
                 # Prepend bot attribution to the PR body
