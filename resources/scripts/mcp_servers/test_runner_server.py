@@ -229,10 +229,15 @@ def discover_all(workspace: str) -> dict:
 def run_python_tests(workspace: str, test_path: str | None = None,
                      extra_args: str = "") -> dict:
     """Execute pytest and return results."""
-    if find_spec("pytest") is None:
-        return _skip("pytest is not installed in the active Python environment")
-
-    cmd = [sys.executable, "-m", "pytest", "--tb=long", "-v"]
+    if find_spec("pytest") is not None:
+        cmd = [sys.executable, "-m", "pytest", "--tb=long", "-v"]
+    else:
+        pytest_bin = shutil.which("pytest")
+        if not pytest_bin:
+            return _skip(
+                "pytest is not installed in the active Python environment and no global pytest executable was found on PATH"
+            )
+        cmd = [pytest_bin, "--tb=long", "-v"]
 
     if test_path:
         abs_test = _resolve_workspace_path(workspace, test_path)
