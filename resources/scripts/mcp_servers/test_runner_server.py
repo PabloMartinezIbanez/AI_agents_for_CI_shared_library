@@ -229,15 +229,36 @@ def discover_all(workspace: str) -> dict:
 def run_python_tests(workspace: str, test_path: str | None = None,
                      extra_args: str = "") -> dict:
     """Execute pytest and return results."""
+    bootstrap_output = ""
+
     if find_spec("pytest") is not None:
         cmd = [sys.executable, "-m", "pytest", "--tb=long", "-v"]
     else:
-        pytest_bin = shutil.which("pytest")
-        if not pytest_bin:
-            return _skip(
-                "pytest is not installed in the active Python environment and no global pytest executable was found on PATH"
-            )
-        cmd = [pytest_bin, "--tb=long", "-v"]
+        install_result = _run_command(
+            [sys.executable, "-m", "pip", "install", "pytest"],
+            cwd=workspace,
+            timeout=240,
+        )
+        if install_result["returncode"] == 0 and find_spec("pytest") is not None:
+            cmd = [sys.executable, "-m", "pytest", "--tb=long", "-v"]
+            bootstrap_output = (
+                "[bootstrap] pytest was missing and has been installed in the active environment.\n"
+                + (install_result.get("output") or "")
+            ).strip()
+        else:
+            pytest_bin = shutil.which("pytest")
+            if not pytest_bin:
+                install_log = install_result.get("output") or ""
+                return _skip(
+                    "pytest is not installed in the active Python environment, automatic installation failed, "
+                    "and no global pytest executable was found on PATH.\n"
+                    + install_log
+                )
+            cmd = [pytest_bin, "--tb=long", "-v"]
+            bootstrap_output = (
+                "[bootstrap] pytest installation in active environment failed; using global pytest from PATH.\n"
+                + (install_result.get("output") or "")
+            ).strip()
 
     if test_path:
         abs_test = _resolve_workspace_path(workspace, test_path)
@@ -256,7 +277,11 @@ def run_python_tests(workspace: str, test_path: str | None = None,
     if extra_args:
         cmd.extend(shlex.split(extra_args))
 
-    return _run_command(cmd, cwd=workspace)
+    result = _run_command(cmd, cwd=workspace)
+    if bootstrap_output:
+        output = result.get("output") or ""
+        result["output"] = (bootstrap_output + "\n\n" + output).strip() if output else bootstrap_output
+    return result
 
 
 def run_node_tests(workspace: str, test_path: str | None = None) -> dict:
