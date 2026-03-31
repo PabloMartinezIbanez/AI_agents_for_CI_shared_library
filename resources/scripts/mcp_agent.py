@@ -407,7 +407,7 @@ Start by querying SonarQube for open issues in the project."""
                             result_text = "(empty result)"
 
                         # Truncate very long results for logging
-                        log_preview = result_text[:800] + ("..." if len(result_text) > 800 else "")
+                        log_preview = result_text[:600] + ("..." if len(result_text) > 600 else "")
                         log(f"   ✅ Result ({len(result_text)} chars): {log_preview}")
                     except Exception as e:
                         result_text = f"Error calling {func_name}: {e}"
