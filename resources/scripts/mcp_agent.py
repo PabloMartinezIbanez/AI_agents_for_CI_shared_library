@@ -242,7 +242,7 @@ You have access to MCP tools connected to:
       are pre-existing and unrelated to your changes).
     - Include the validation outcome in your final summary, even if no tests are detected.
 5. **Create a PR**: Once all fixes are applied:
-   - Use `create_branch` to create a new branch named `ai-fix/{source_branch}-{date}` (date = YYYYMMDD).
+    - Use `create_branch` to create a new branch named `ai-fix/{source_branch}-{date}` (date = YYYYMMDD), explicitly setting `from_branch` to `{source_branch}`.
    - Use `push_files` to push ALL modified files in a single commit.
     - Use `create_pull_request` to open a PR. The title MUST follow this exact format:
       `[AI Fix][{source_branch}] {N} issue(s) fixed — {date}`
@@ -344,6 +344,12 @@ Start by querying SonarQube for open issues in the project."""
                 func_args["author"] = bot_identity
 
 
+            elif func_name == "create_branch":
+                # Always branch from the pipeline source branch instead of repo default branch.
+                # This prevents accidental branching from main when the LLM omits from_branch.
+                func_args["from_branch"] = source_branch
+
+
             elif func_name == "create_pull_request":
                 # Prepend bot attribution to the PR body
                 existing_body = func_args.get("body", "")
@@ -354,10 +360,7 @@ Start by querying SonarQube for open issues in the project."""
                 )
 
             log(f"\n🔧 Tool call: {func_name}")
-            if func_name == "create_branch":
-                log(f"   Args: {json.dumps(func_args, indent=2)}")
-            else:
-                log(f"   Args: {json.dumps(func_args, indent=2)[:500]}")
+            log(f"   Args: {json.dumps(func_args, indent=2)[:500]}")
 
             if dry_run and func_name in (
                 "create_branch", "push_files", "create_pull_request",
