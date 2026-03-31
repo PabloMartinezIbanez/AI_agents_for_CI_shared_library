@@ -1,11 +1,29 @@
 #!/usr/bin/env python3
 """
-MCP Server — Test Runner (modular)
+MCP Server ---- Test Runner (config-driven)
 
 Expone 3 tools MCP:
-  - discover_tests   : detecta frameworks y archivos de test en el workspace
-  - run_tests        : ejecuta tests (pytest y/o Node.js)
+  - discover_tests   : lee .ai-tests.json y devuelve la configuracion de suites
+  - run_tests        : ejecuta las suites definidas en .ai-tests.json
   - analyze_failures : parsea el output de tests fallidos y clasifica la culpa
+
+El proyecto debe contener un archivo ``.ai-tests.json`` en la raiz del workspace
+(o en la ruta indicada por AI_TEST_CONFIG_FILE) con la configuracion de test suites.
+
+Formato de ``.ai-tests.json``::
+
+    {
+      "test_suites": [
+        {
+          "name": "unit-tests",
+          "command": "python -m pytest tests/ --tb=long -v",
+          "framework": "pytest",
+          "setup": "pip install -r requirements-test.txt",
+          "test_dir": "tests/",
+          "timeout": 120
+        }
+      ]
+    }
 
 Transporte: stdio (el agente lo lanza como subproceso).
 
@@ -16,65 +34,38 @@ Uso:
 import json
 import os
 import re
-import shlex
-import shutil
 import subprocess
 import sys
-from importlib.util import find_spec
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
-# ─────────────────────────────────────────────────────────────────────
+# --------------------------------------------------------------------------
 # 1. Constants & Config
-# ─────────────────────────────────────────────────────────────────────
+# --------------------------------------------------------------------------
 
 server = Server("test-runner")
 
 WORKSPACE = os.environ.get("WORKSPACE_ROOT", ".")
 
-PYTHON_TEST_CONFIGS = {"pytest.ini", "tox.ini", "setup.cfg", "pyproject.toml"}
-PYTHON_TEST_DIR_NAMES = {"tests", "test"}
+DEFAULT_CONFIG_FILENAME = ".ai-tests.json"
+DEFAULT_TIMEOUT = 120
+SUPPORTED_FRAMEWORKS = ("pytest", "node", "generic")
 
-NODE_TEST_FILE_SUFFIXES = (
-    ".test.js", ".spec.js",
-    ".test.mjs", ".spec.mjs",
-    ".test.cjs", ".spec.cjs",
-    ".test.ts", ".spec.ts",
+# Suffixes used by _is_test_file heuristic (kept for analyze_failures)
+_NODE_TEST_SUFFIXES = (
+    ".test.js", ".spec.js", ".test.mjs", ".spec.mjs",
+    ".test.cjs", ".spec.cjs", ".test.ts", ".spec.ts",
 )
-NODE_TEST_DIR_NAMES = {"test", "tests", "__tests__"}
 
-IGNORED_DIRS = {
-    ".git", ".hg", ".svn",
-    ".venv", "venv", "env",
-    "node_modules", "__pycache__",
-    ".ai_fixer", ".tox", "dist", "build",
-}
-
-# ─────────────────────────────────────────────────────────────────────
+# --------------------------------------------------------------------------
 # 2. Helpers
-# ─────────────────────────────────────────────────────────────────────
+# --------------------------------------------------------------------------
 
 
-def _resolve_workspace_path(workspace: str, relative_path: str):
-    """Resolve *relative_path* inside *workspace*; return None if it escapes."""
-    abs_path = os.path.normpath(os.path.join(workspace, relative_path))
-    if os.path.commonpath([workspace, abs_path]) != workspace:
-        return None
-    return abs_path
-
-
-def _iter_workspace_files(workspace: str):
-    """Walk workspace yielding (root, filename), skipping ignored dirs."""
-    for root, dirs, files in os.walk(workspace):
-        dirs[:] = [d for d in dirs if d not in IGNORED_DIRS]
-        for filename in files:
-            yield root, filename
-
-
-def _run_command(cmd, cwd=None, timeout=120):
-    """Run a shell command and return a result dict."""
+def _run_command(cmd, cwd=None, timeout=120, shell=False):
+    """Run a command and return a result dict."""
     try:
         proc = subprocess.run(
             cmd,
@@ -82,6 +73,7 @@ def _run_command(cmd, cwd=None, timeout=120):
             text=True,
             cwd=cwd or WORKSPACE,
             timeout=timeout,
+            shell=shell,
         )
         output = ""
         if proc.stdout:
@@ -102,222 +94,192 @@ def _run_command(cmd, cwd=None, timeout=120):
                 "passed": False, "status": "error"}
 
 
-def _skip(message: str):
+def _skip(message):
     return {"returncode": 0, "output": message, "passed": False,
             "status": "skipped", "skipped": True}
 
 
-def _normalize_node_zero_tests_result(result: dict) -> dict:
-    """Treat Node.js runs with 0 executed tests as skipped instead of passed."""
-    output = result.get("output", "")
-    if "tests 0" in output and "fail 0" in output:
-        normalized = dict(result)
-        normalized["passed"] = False
-        normalized["status"] = "skipped"
-        normalized["skipped"] = True
-        return normalized
-    return result
+# --------------------------------------------------------------------------
+# 3. Config loading & validation
+# --------------------------------------------------------------------------
 
 
-# ─────────────────────────────────────────────────────────────────────
-# 3. Discovery
-# ─────────────────────────────────────────────────────────────────────
+def _config_path(workspace):
+    """Return the absolute path to the test config file."""
+    custom = os.environ.get("AI_TEST_CONFIG_FILE", "").strip()
+    if custom:
+        if os.path.isabs(custom):
+            return custom
+        return os.path.join(workspace, custom)
+    return os.path.join(workspace, DEFAULT_CONFIG_FILENAME)
 
 
-def discover_python_tests(workspace: str) -> dict:
-    """Scan workspace for Python/pytest test artefacts."""
-    config_files = []
-    test_files = []
-    test_dirs = set()
+def _load_config(workspace):
+    """Load and validate .ai-tests.json.  Returns parsed dict or None."""
+    path = _config_path(workspace)
+    if not os.path.isfile(path):
+        return None
 
-    for root, filename in _iter_workspace_files(workspace):
-        rel_root = os.path.relpath(root, workspace)
+    with open(path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
 
-        # Config files
-        if filename in PYTHON_TEST_CONFIGS:
-            config_files.append(
-                os.path.join(rel_root, filename) if rel_root != "." else filename
+    # --- schema validation ---
+    if not isinstance(data, dict):
+        raise ValueError(f"{path}: root must be a JSON object")
+
+    suites = data.get("test_suites")
+    if not isinstance(suites, list) or len(suites) == 0:
+        raise ValueError(f"{path}: 'test_suites' must be a non-empty array")
+
+    seen_names = set()
+    for idx, suite in enumerate(suites):
+        if not isinstance(suite, dict):
+            raise ValueError(f"{path}: test_suites[{idx}] must be an object")
+
+        name = suite.get("name")
+        if not name or not isinstance(name, str):
+            raise ValueError(f"{path}: test_suites[{idx}] must have a string 'name'")
+        if name in seen_names:
+            raise ValueError(f"{path}: duplicate suite name '{name}'")
+        seen_names.add(name)
+
+        command = suite.get("command")
+        if not command or not isinstance(command, str):
+            raise ValueError(f"{path}: suite '{name}' must have a string 'command'")
+
+        fw = suite.get("framework", "generic")
+        if fw not in SUPPORTED_FRAMEWORKS:
+            raise ValueError(
+                f"{path}: suite '{name}' has unsupported framework '{fw}'. "
+                f"Supported: {SUPPORTED_FRAMEWORKS}"
             )
 
-        if not filename.endswith(".py"):
-            continue
+        timeout = suite.get("timeout", DEFAULT_TIMEOUT)
+        if not isinstance(timeout, (int, float)) or timeout <= 0:
+            raise ValueError(f"{path}: suite '{name}' timeout must be a positive number")
 
-        # Test files by naming convention
-        if filename.startswith("test_") or filename.endswith("_test.py"):
-            rel_file = os.path.join(rel_root, filename) if rel_root != "." else filename
-            test_files.append(rel_file)
-            test_dirs.add(rel_root if rel_root != "." else ".")
-            continue
+    return data
 
-        # Files inside known test directories
-        if rel_root != ".":
-            top_dir = rel_root.split(os.sep)[0]
-            if top_dir in PYTHON_TEST_DIR_NAMES:
-                rel_file = os.path.join(rel_root, filename)
-                test_files.append(rel_file)
-                test_dirs.add(rel_root)
 
-    detected = bool(test_files or config_files)
+# --------------------------------------------------------------------------
+# 4. Discovery (config-driven)
+# --------------------------------------------------------------------------
+
+
+def discover_tests(workspace):
+    """Read .ai-tests.json and return its contents."""
+    try:
+        config = _load_config(workspace)
+    except (json.JSONDecodeError, ValueError) as exc:
+        return {"configured": False, "error": str(exc)}
+
+    if config is None:
+        return {
+            "configured": False,
+            "message": (
+                f"No test configuration found. Create a '{DEFAULT_CONFIG_FILENAME}' "
+                "file in the project root to define how tests should be run. "
+                "See the tool description for the expected format."
+            ),
+        }
+
+    suites_summary = []
+    for suite in config["test_suites"]:
+        suites_summary.append({
+            "name": suite["name"],
+            "framework": suite.get("framework", "generic"),
+            "command": suite["command"],
+            "setup": suite.get("setup"),
+            "test_dir": suite.get("test_dir"),
+            "timeout": suite.get("timeout", DEFAULT_TIMEOUT),
+        })
+
     return {
-        "framework": "pytest",
-        "detected": detected,
-        "config_files": sorted(config_files),
-        "test_dirs": sorted(test_dirs),
-        "test_files": sorted(test_files),
+        "configured": True,
+        "config_file": _config_path(workspace),
+        "test_suites": suites_summary,
     }
 
 
-def discover_node_tests(workspace: str) -> dict:
-    """Scan workspace for Node.js test artefacts."""
-    has_package_json = False
-    test_script = None
-    test_files = []
-    test_dirs = set()
-
-    pkg_path = os.path.join(workspace, "package.json")
-    if os.path.isfile(pkg_path):
-        has_package_json = True
-        try:
-            with open(pkg_path, "r", encoding="utf-8") as fh:
-                pkg = json.load(fh)
-            test_script = pkg.get("scripts", {}).get("test")
-        except (json.JSONDecodeError, OSError):
-            pass
-
-    for root, filename in _iter_workspace_files(workspace):
-        rel_root = os.path.relpath(root, workspace)
-
-        if filename.endswith(NODE_TEST_FILE_SUFFIXES):
-            rel_file = os.path.join(rel_root, filename) if rel_root != "." else filename
-            test_files.append(rel_file)
-            test_dirs.add(rel_root if rel_root != "." else ".")
-            continue
-
-        # JS files inside known test directories
-        if rel_root != "." and filename.endswith((".js", ".mjs", ".cjs", ".ts")):
-            top_dir = rel_root.split(os.sep)[0]
-            if top_dir in NODE_TEST_DIR_NAMES:
-                rel_file = os.path.join(rel_root, filename)
-                test_files.append(rel_file)
-                test_dirs.add(rel_root)
-
-    detected = bool(test_files) or bool(test_script)
-    return {
-        "framework": "node",
-        "detected": detected,
-        "has_package_json": has_package_json,
-        "test_script": test_script,
-        "test_dirs": sorted(test_dirs),
-        "test_files": sorted(test_files),
-    }
+# --------------------------------------------------------------------------
+# 5. Execution (config-driven)
+# --------------------------------------------------------------------------
 
 
-def discover_all(workspace: str) -> dict:
-    return {
-        "frameworks": [
-            discover_python_tests(workspace),
-            discover_node_tests(workspace),
-        ]
-    }
+def run_suite(workspace, suite, extra_args=""):
+    """Run a single test suite: setup (if any) then command."""
+    name = suite["name"]
+    framework = suite.get("framework", "generic")
+    timeout = suite.get("timeout", DEFAULT_TIMEOUT)
+    result_base = {"name": name, "framework": framework}
 
-
-# ─────────────────────────────────────────────────────────────────────
-# 4. Execution
-# ─────────────────────────────────────────────────────────────────────
-
-
-def run_python_tests(workspace: str, test_path: str | None = None,
-                     extra_args: str = "") -> dict:
-    """Execute pytest and return results."""
-    bootstrap_output = ""
-
-    if find_spec("pytest") is not None:
-        cmd = [sys.executable, "-m", "pytest", "--tb=long", "-v"]
-    else:
-        install_result = _run_command(
-            [sys.executable, "-m", "pip", "install", "pytest"],
-            cwd=workspace,
-            timeout=240,
+    # --- setup step ---
+    setup_cmd = suite.get("setup")
+    if setup_cmd:
+        setup_result = _run_command(
+            setup_cmd, cwd=workspace, timeout=timeout, shell=True,
         )
-        if install_result["returncode"] == 0 and find_spec("pytest") is not None:
-            cmd = [sys.executable, "-m", "pytest", "--tb=long", "-v"]
-            bootstrap_output = (
-                "[bootstrap] pytest was missing and has been installed in the active environment.\n"
-                + (install_result.get("output") or "")
-            ).strip()
-        else:
-            pytest_bin = shutil.which("pytest")
-            if not pytest_bin:
-                install_log = install_result.get("output") or ""
-                return _skip(
-                    "pytest is not installed in the active Python environment, automatic installation failed, "
-                    "and no global pytest executable was found on PATH.\n"
-                    + install_log
-                )
-            cmd = [pytest_bin, "--tb=long", "-v"]
-            bootstrap_output = (
-                "[bootstrap] pytest installation in active environment failed; using global pytest from PATH.\n"
-                + (install_result.get("output") or "")
-            ).strip()
+        if setup_result["returncode"] != 0:
+            return {
+                **result_base,
+                "returncode": setup_result["returncode"],
+                "output": f"[setup failed]\n{setup_result['output']}",
+                "passed": False,
+                "status": "setup_failed",
+            }
 
-    if test_path:
-        abs_test = _resolve_workspace_path(workspace, test_path)
-        if abs_test is None:
-            return {"returncode": 1, "output": "Error: test_path escapes workspace",
-                    "passed": False, "status": "error"}
-        if not os.path.exists(abs_test):
-            return {"returncode": 1, "output": f"Test path not found: {test_path}",
-                    "passed": False, "status": "error"}
-        cmd.append(abs_test)
-    else:
-        info = discover_python_tests(workspace)
-        if not info["detected"]:
-            return _skip("No Python test files found in the workspace")
-
+    # --- test command ---
+    command = suite["command"]
     if extra_args:
-        cmd.extend(shlex.split(extra_args))
+        command = f"{command} {extra_args}"
 
-    result = _run_command(cmd, cwd=workspace)
-    if bootstrap_output:
-        output = result.get("output") or ""
-        result["output"] = (bootstrap_output + "\n\n" + output).strip() if output else bootstrap_output
-    return result
+    test_result = _run_command(
+        command, cwd=workspace, timeout=timeout, shell=True,
+    )
 
-
-def run_node_tests(workspace: str, test_path: str | None = None) -> dict:
-    """Execute Node.js tests and return results."""
-    if test_path:
-        if shutil.which("node") is None:
-            return _skip("node is not installed or not available on PATH")
-        abs_test = _resolve_workspace_path(workspace, test_path)
-        if abs_test is None:
-            return {"returncode": 1, "output": "Error: test_path escapes workspace",
-                    "passed": False, "status": "error"}
-        if not os.path.exists(abs_test):
-            return {"returncode": 1, "output": f"Test path not found: {test_path}",
-                    "passed": False, "status": "error"}
-        cmd = ["node", "--test", abs_test]
-    else:
-        info = discover_node_tests(workspace)
-        if not info["detected"]:
-            return _skip("No Node.js test files found in the workspace")
-
-        if info["has_package_json"] and info.get("test_script"):
-            if shutil.which("npm") is None:
-                return _skip("npm is not installed or not available on PATH")
-            cmd = ["npm", "test"]
-        else:
-            if shutil.which("node") is None:
-                return _skip("node is not installed or not available on PATH")
-            cmd = ["node", "--test"]
-
-    result = _run_command(cmd, cwd=workspace)
-    return _normalize_node_zero_tests_result(result)
+    return {
+        **result_base,
+        "returncode": test_result["returncode"],
+        "output": test_result["output"],
+        "passed": test_result["passed"],
+        "status": test_result["status"],
+    }
 
 
-# ─────────────────────────────────────────────────────────────────────
-# 5. Analysis — parse test output into structured failures
-# ─────────────────────────────────────────────────────────────────────
+def run_tests(workspace, suite_name=None, extra_args=""):
+    """Run test suites from .ai-tests.json."""
+    try:
+        config = _load_config(workspace)
+    except (json.JSONDecodeError, ValueError) as exc:
+        return {"error": str(exc)}
+
+    if config is None:
+        return _skip(
+            f"No test configuration found ({DEFAULT_CONFIG_FILENAME}). "
+            "Tests cannot be run without explicit configuration."
+        )
+
+    suites = config["test_suites"]
+
+    if suite_name:
+        matched = [s for s in suites if s["name"] == suite_name]
+        if not matched:
+            available = [s["name"] for s in suites]
+            return {
+                "error": f"Suite '{suite_name}' not found. Available: {available}"
+            }
+        suites = matched
+
+    results = []
+    for suite in suites:
+        results.append(run_suite(workspace, suite, extra_args))
+
+    return {"results": results}
+
+
+# --------------------------------------------------------------------------
+# 6. Analysis --- parse test output into structured failures
+# --------------------------------------------------------------------------
 
 # Regex patterns for pytest traceback parsing
 _RE_PYTEST_FAILURE_HEADER = re.compile(
@@ -341,12 +303,12 @@ _RE_NODE_STACK_FRAME = re.compile(
 )
 
 
-def _is_test_file(filepath: str) -> bool:
+def _is_test_file(filepath):
     """Heuristic: does the path look like a test file?"""
     base = os.path.basename(filepath)
     if base.startswith("test_") or base.endswith("_test.py"):
         return True
-    for suffix in NODE_TEST_FILE_SUFFIXES:
+    for suffix in _NODE_TEST_SUFFIXES:
         if base.endswith(suffix):
             return True
     parts = filepath.replace("\\", "/").split("/")
@@ -356,7 +318,7 @@ def _is_test_file(filepath: str) -> bool:
     return False
 
 
-def classify_fault(failure: dict) -> str:
+def classify_fault(failure):
     """Heuristic to decide if the failure is likely caused by source or test.
 
     Returns "source", "test", or "unknown".
@@ -364,23 +326,20 @@ def classify_fault(failure: dict) -> str:
     source_frames = failure.get("source_frames", [])
     error_type = failure.get("error_type", "")
 
-    # If there are frames in source (non-test) code, the fault is likely there
     if source_frames:
         return "source"
 
-    # Pure assertion errors with no source frames -> the test itself is probably wrong
     if error_type in ("AssertionError", "AssertionError", "AssertError"):
         return "test"
 
     return "unknown"
 
 
-def parse_pytest_failures(output: str) -> list[dict]:
+def parse_pytest_failures(output):
     """Parse verbose pytest output into a list of structured failure dicts."""
     failures = []
     lines = output.splitlines()
 
-    # Strategy 1: parse full tracebacks between ___ HEADER ___ markers
     i = 0
     while i < len(lines):
         header_match = _RE_PYTEST_FAILURE_HEADER.match(lines[i])
@@ -391,7 +350,6 @@ def parse_pytest_failures(output: str) -> list[dict]:
         test_id = header_match.group(1).strip()
         i += 1
 
-        # Collect all lines until next header or short-test-summary / ====
         tb_lines = []
         while i < len(lines):
             if _RE_PYTEST_FAILURE_HEADER.match(lines[i]):
@@ -403,7 +361,6 @@ def parse_pytest_failures(output: str) -> list[dict]:
 
         traceback_text = "\n".join(tb_lines)
 
-        # Extract frames from traceback
         all_frames = []
         for line in tb_lines:
             fm = _RE_PYTEST_FILE_LINE.match(line)
@@ -414,7 +371,6 @@ def parse_pytest_failures(output: str) -> list[dict]:
                     "function": fm.group(3),
                 })
 
-        # Extract error type + message from E lines
         error_type = ""
         error_message = ""
         for line in tb_lines:
@@ -424,11 +380,9 @@ def parse_pytest_failures(output: str) -> list[dict]:
                 error_message = em.group(2).strip()
                 break
 
-        # Separate test frames from source frames
         source_frames = [f for f in all_frames if not _is_test_file(f["file"])]
         test_frames = [f for f in all_frames if _is_test_file(f["file"])]
 
-        # Determine test file / line from the test_id or the last test frame
         test_file = ""
         test_line = 0
         if "::" in test_id:
@@ -450,7 +404,6 @@ def parse_pytest_failures(output: str) -> list[dict]:
         failure["likely_fault"] = classify_fault(failure)
         failures.append(failure)
 
-    # Strategy 2 (fallback): parse short test summary lines
     if not failures:
         for line in lines:
             sm = _RE_PYTEST_SHORT_SUMMARY.match(line.strip())
@@ -472,7 +425,7 @@ def parse_pytest_failures(output: str) -> list[dict]:
     return failures
 
 
-def parse_node_failures(output: str) -> list[dict]:
+def parse_node_failures(output):
     """Parse Node.js test runner (TAP) or npm test output into structured failures."""
     failures = []
     lines = output.splitlines()
@@ -484,7 +437,6 @@ def parse_node_failures(output: str) -> list[dict]:
 
         test_name = m.group(1).strip()
 
-        # Gather indented context lines after the "not ok" line
         ctx_lines = []
         j = idx + 1
         while j < len(lines) and (lines[j].startswith("  ") or lines[j].strip() == ""):
@@ -492,13 +444,11 @@ def parse_node_failures(output: str) -> list[dict]:
             j += 1
         context_text = "\n".join(ctx_lines)
 
-        # Extract error message
         error_message = ""
         em = _RE_NODE_ERROR_LINE.search(context_text)
         if em:
             error_message = em.group(1).strip()
 
-        # Extract stack frames
         all_frames = []
         for cl in ctx_lines:
             fm = _RE_NODE_STACK_FRAME.search(cl)
@@ -541,16 +491,34 @@ def parse_node_failures(output: str) -> list[dict]:
     return failures
 
 
-def analyze_test_output(framework: str, test_output: str) -> dict:
+def parse_generic_failures(output):
+    """Fallback parser: return the raw output as a single failure block."""
+    if not output.strip():
+        return []
+    return [{
+        "test_name": "(unknown)",
+        "test_file": "",
+        "test_line": 0,
+        "error_type": "",
+        "error_message": "",
+        "traceback": output.strip(),
+        "source_frames": [],
+        "likely_fault": "unknown",
+    }]
+
+
+def analyze_test_output(framework, test_output):
     """Dispatch to the right parser and return structured failure info."""
     framework = framework.lower().strip()
     if framework in ("pytest", "python"):
         parsed = parse_pytest_failures(test_output)
     elif framework in ("node", "nodejs", "npm", "node.js"):
         parsed = parse_node_failures(test_output)
+    elif framework == "generic":
+        parsed = parse_generic_failures(test_output)
     else:
         return {"error": f"Unknown framework: {framework}",
-                "supported": ["pytest", "node"]}
+                "supported": ["pytest", "node", "generic"]}
 
     return {
         "framework": framework,
@@ -559,9 +527,32 @@ def analyze_test_output(framework: str, test_output: str) -> dict:
     }
 
 
-# ─────────────────────────────────────────────────────────────────────
-# 6. MCP Tool definitions
-# ─────────────────────────────────────────────────────────────────────
+# --------------------------------------------------------------------------
+# 7. MCP Tool definitions
+# --------------------------------------------------------------------------
+
+CONFIG_FORMAT_HELP = """
+Expected format of .ai-tests.json:
+{
+  "test_suites": [
+    {
+      "name": "unit-tests",
+      "command": "python -m pytest tests/ --tb=long -v",
+      "framework": "pytest",
+      "setup": "pip install -r requirements-test.txt",
+      "test_dir": "tests/",
+      "timeout": 120
+    }
+  ]
+}
+Fields:
+  - name (required): unique identifier for the suite
+  - command (required): shell command to execute the tests
+  - framework (optional, default "generic"): output parser -- "pytest", "node", or "generic"
+  - setup (optional): shell command to install dependencies before running tests
+  - test_dir (optional): directory where test files live (informational)
+  - timeout (optional, default 120): max seconds before killing the test process
+""".strip()
 
 
 @server.list_tools()
@@ -570,9 +561,10 @@ async def list_tools():
         Tool(
             name="discover_tests",
             description=(
-                "Scan the workspace to detect available test frameworks and test files. "
-                "Returns which frameworks are present (pytest, Node.js), their config files, "
-                "test directories, and individual test files found."
+                "Read the project's .ai-tests.json configuration file and return the list "
+                "of defined test suites with their commands, frameworks, setup steps, and "
+                "timeouts. Returns configured=false if no config file exists.\n\n"
+                + CONFIG_FORMAT_HELP
             ),
             inputSchema={
                 "type": "object",
@@ -582,33 +574,26 @@ async def list_tools():
         Tool(
             name="run_tests",
             description=(
-                "Execute tests in the workspace. Can run a specific framework (pytest or node) "
-                "or all detected frameworks. Returns exit code, pass/fail status, and full output "
-                "including tracebacks for failures. Use 'analyze_failures' on the output to get "
-                "structured failure data."
+                "Execute test suites as defined in .ai-tests.json. For each suite, runs "
+                "the optional 'setup' command first, then the 'command'. Returns exit code, "
+                "pass/fail status, and full output. Use 'analyze_failures' on the output "
+                "to get structured failure data."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "framework": {
+                    "suite": {
                         "type": "string",
                         "description": (
-                            "Which framework to run: 'pytest' or 'node'. "
-                            "If omitted, runs all detected frameworks."
-                        ),
-                    },
-                    "test_path": {
-                        "type": "string",
-                        "description": (
-                            "Optional path to a specific test file or directory, "
-                            "relative to workspace root."
+                            "Name of a specific test suite to run (must match a 'name' "
+                            "in .ai-tests.json). If omitted, runs all suites."
                         ),
                     },
                     "extra_args": {
                         "type": "string",
                         "description": (
-                            "Optional extra arguments for the test runner "
-                            "(e.g. '-x --no-header' for pytest). Only used with pytest."
+                            "Optional extra arguments appended to the test command "
+                            "(e.g. '-x --no-header')."
                         ),
                     },
                 },
@@ -621,14 +606,15 @@ async def list_tools():
                 "For each failure returns: test name, test file, line number, error type, "
                 "error message, full traceback, source files involved, and a 'likely_fault' "
                 "hint ('source' if the bug is probably in production code, 'test' if the "
-                "test itself is wrong, or 'unknown')."
+                "test itself is wrong, or 'unknown'). Use framework='generic' if the "
+                "test runner is not pytest or node."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "framework": {
                         "type": "string",
-                        "description": "The test framework that produced the output: 'pytest' or 'node'.",
+                        "description": "The test framework that produced the output: 'pytest', 'node', or 'generic'.",
                     },
                     "test_output": {
                         "type": "string",
@@ -642,64 +628,22 @@ async def list_tools():
 
 
 @server.call_tool()
-async def call_tool(name: str, arguments: dict):
+async def call_tool(name, arguments):
     workspace = os.path.abspath(WORKSPACE)
 
-    # ── discover_tests ──
+    # -- discover_tests --
     if name == "discover_tests":
-        result = discover_all(workspace)
+        result = discover_tests(workspace)
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
-    # ── run_tests ──
+    # -- run_tests --
     if name == "run_tests":
-        framework = arguments.get("framework")
-        test_path = arguments.get("test_path")
+        suite_name = arguments.get("suite")
         extra_args = arguments.get("extra_args", "")
+        result = run_tests(workspace, suite_name, extra_args)
+        return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
-        results = []
-
-        if framework:
-            fw = framework.lower().strip()
-            if fw in ("pytest", "python"):
-                results.append({
-                    "framework": "pytest",
-                    **run_python_tests(workspace, test_path, extra_args),
-                })
-            elif fw in ("node", "nodejs", "npm", "node.js"):
-                results.append({
-                    "framework": "node",
-                    **run_node_tests(workspace, test_path),
-                })
-            else:
-                return [TextContent(type="text", text=json.dumps(
-                    {"error": f"Unknown framework: {framework}",
-                     "supported": ["pytest", "node"]}, indent=2))]
-        else:
-            # Run all detected frameworks
-            info = discover_all(workspace)
-            for fw_info in info["frameworks"]:
-                if not fw_info["detected"]:
-                    continue
-                fw_name = fw_info["framework"]
-                if fw_name == "pytest":
-                    results.append({
-                        "framework": "pytest",
-                        **run_python_tests(workspace, test_path, extra_args),
-                    })
-                elif fw_name == "node":
-                    results.append({
-                        "framework": "node",
-                        **run_node_tests(workspace, test_path),
-                    })
-
-            if not results:
-                return [TextContent(type="text", text=json.dumps(
-                    _skip("No test frameworks detected in the workspace"), indent=2))]
-
-        return [TextContent(type="text", text=json.dumps(
-            {"results": results}, indent=2))]
-
-    # ── analyze_failures ──
+    # -- analyze_failures --
     if name == "analyze_failures":
         framework = arguments.get("framework", "")
         test_output = arguments.get("test_output", "")
@@ -712,9 +656,9 @@ async def call_tool(name: str, arguments: dict):
     return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
 
-# ─────────────────────────────────────────────────────────────────────
-# 7. Server entry point
-# ─────────────────────────────────────────────────────────────────────
+# --------------------------------------------------------------------------
+# 8. Server entry point
+# --------------------------------------------------------------------------
 
 
 async def main():
