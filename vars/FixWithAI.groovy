@@ -9,6 +9,7 @@ def call(Map config = [:]) {
     def sonarqubeCredentialId = config.sonarqubeCredentialId ?: 'SONARQUBE_TOKEN'
     def sonarqubeUrl  = config.sonarqubeUrl   ?: (env.SONARQUBE_URL ?: '')
     def sonarqubeProjectKey = config.sonarqubeProjectKey ?: (env.SONARQUBE_EFFECTIVE_PROJECT_KEY ?: '')
+    def testConfigFile = config.testConfigFile ?: ''
 
     script {
         // ── 1. Extraer scripts MCP de la shared library ──
@@ -108,6 +109,7 @@ def call(Map config = [:]) {
                 export SONARQUBE_URL='${sonarqubeUrl}'
                 export SONARQUBE_TOKEN="\${SONARQUBE_TOKEN}"
                 export SONARQUBE_EFFECTIVE_PROJECT_KEY='${sonarqubeProjectKey}'
+                ${testConfigFile ? "export AI_TEST_CONFIG_FILE='${testConfigFile}'" : ''}
 
                 python3 .ai_fixer/mcp_agent.py \
                     --repo '${repoSlug}' \

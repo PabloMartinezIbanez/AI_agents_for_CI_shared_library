@@ -92,13 +92,18 @@ def build_server_configs(workspace, sonarqube_url, sonarqube_token, sonarqube_pr
 
     # --- Test Runner MCP Server (local Python) ---
     if os.path.isfile(test_runner_script):
+        test_runner_env = {
+            **os.environ,
+            "WORKSPACE_ROOT": workspace,
+        }
+        # Forward custom config path if set by pipeline
+        ai_test_config = os.environ.get("AI_TEST_CONFIG_FILE", "")
+        if ai_test_config:
+            test_runner_env["AI_TEST_CONFIG_FILE"] = ai_test_config
         servers["test_runner"] = StdioServerParameters(
             command=sys.executable,
             args=[test_runner_script],
-            env={
-                **os.environ,
-                "WORKSPACE_ROOT": workspace,
-            },
+            env=test_runner_env,
         )
     else:
         log(f"⚠️  Test Runner MCP server not found at {test_runner_script}, skipping Test Runner MCP server")
@@ -217,7 +222,7 @@ Your goal is to fix code quality issues and create a Pull Request with the fixes
 You have access to MCP tools connected to:
 - **SonarQube**: Query code issues, security hotspots, and quality metrics
 - **Filesystem**: Read and write files in the project workspace
-- **Test Runner**: Discover test frameworks, execute tests, and analyze failures
+- **Test Runner**: Run tests defined in the project's `.ai-tests.json` config and analyze failures
 - **GitHub**: Create branches, push files, and create pull requests
 
 ## Workflow
@@ -232,15 +237,19 @@ You have access to MCP tools connected to:
    - Preserve coding style, indentation, and comments.
    - Do NOT change logic unless required to fix an issue.
 4. **Validate the changes**: Before creating a PR, run available tests.
-    - Call `discover_tests` to detect which test frameworks are available.
-    - Call `run_tests` to execute all detected frameworks (or a specific one).
-    - If any tests fail, call `analyze_failures` with the raw output to get structured
-      failure data including test name, file, line, error type, and a `likely_fault` hint.
+    - Call `discover_tests` to load the project's `.ai-tests.json` test configuration.
+      This file defines test suites with their commands, setup steps, and frameworks.
+    - If `configured` is true, call `run_tests` to execute all configured suites
+      (or a specific one by name using the `suite` parameter).
+    - If `configured` is false, note that no tests are configured and skip validation.
+    - If any tests fail, call `analyze_failures` with the raw output and the suite's
+      `framework` value to get structured failure data including test name, file, line,
+      error type, and a `likely_fault` hint.
     - If `likely_fault` is `"source"`, the bug is in the production code you changed — fix it.
     - If `likely_fault` is `"test"`, the test itself may be outdated or wrong — fix the test.
     - Re-run tests after each fix until all pass (or you're confident remaining failures
       are pre-existing and unrelated to your changes).
-    - Include the validation outcome in your final summary, even if no tests are detected.
+    - Include the validation outcome in your final summary, even if no tests are configured.
 5. **Create a PR**: Once all fixes are applied:
     - Use `create_branch` to create a new branch named `ai-fix/{source_branch}-{date}` (date = YYYYMMDD), explicitly setting `from_branch` to `{source_branch}`.
    - Use `push_files` to push ALL modified files in a single commit.
