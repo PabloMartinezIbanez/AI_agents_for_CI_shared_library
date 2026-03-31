@@ -343,6 +343,7 @@ Start by querying SonarQube for open issues in the project."""
                 func_args["committer"] = bot_identity
                 func_args["author"] = bot_identity
 
+
             elif func_name == "create_pull_request":
                 # Prepend bot attribution to the PR body
                 existing_body = func_args.get("body", "")
@@ -353,7 +354,10 @@ Start by querying SonarQube for open issues in the project."""
                 )
 
             log(f"\n🔧 Tool call: {func_name}")
-            log(f"   Args: {json.dumps(func_args, indent=2)[:500]}")
+            if func_name == "create_branch":
+                log(f"   Args: {json.dumps(func_args, indent=2)}")
+            else:
+                log(f"   Args: {json.dumps(func_args, indent=2)[:500]}")
 
             if dry_run and func_name in (
                 "create_branch", "push_files", "create_pull_request",
