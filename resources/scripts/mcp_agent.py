@@ -258,7 +258,7 @@ You have access to MCP tools connected to:
       are pre-existing and unrelated to your changes).
     - Include the validation outcome in your final summary, even if no tests are configured.
 5. **Create a PR**: Once all fixes are applied:
-    - Use `create_branch` to create a new branch named `ai-fix/{source_branch}-{date}` (date = YYYYMMDD), explicitly setting `from_branch` to `{source_branch}`.
+    - Use `create_branch` to create a new branch named `ai-fix/{source_branch}-{date}-{time}` (date = YYYYMMDD, time = HHMMSS in UTC), explicitly setting `from_branch` to `{source_branch}`.
    - Use `push_files` to push ALL modified files in a single commit.
     - Use `create_pull_request` to open a PR. The title MUST follow this exact format:
       `[AI Fix][{source_branch}] {N} issue(s) fixed — {date}`
@@ -287,6 +287,16 @@ async def run_agent_loop(tool_to_session, openai_tools, model, system_prompt,
 
     owner, repo = repo_slug.split("/", 1)
     date_tag = datetime.now(timezone.utc).strftime("%Y%m%d")
+    branch_time_tag = datetime.now(timezone.utc).strftime("%H%M%S")
+    default_fix_branch = f"ai-fix/{source_branch}-{date_tag}-{branch_time_tag}"
+
+    def _append_time_suffix(branch_name):
+        if not isinstance(branch_name, str) or not branch_name:
+            return branch_name
+        suffix = f"-{branch_time_tag}"
+        if branch_name.endswith(suffix):
+            return branch_name
+        return f"{branch_name}{suffix}"
 
     # Initial user message with context
     user_message = f"""Fix all code quality issues in the project and create a Pull Request.
@@ -295,8 +305,9 @@ Context:
 - SonarQube project key: `{sonarqube_project_key}`
 - GitHub repository: `{owner}/{repo}`
 - Source branch: `{source_branch}`
-- Branch for fixes: `ai-fix/{source_branch}-{date_tag}`
+- Branch for fixes: `{default_fix_branch}`
 - Date tag: {date_tag}
+- Time tag (UTC): {branch_time_tag}
 - Dry run: {dry_run}
 
 {"NOTE: This is a DRY RUN. Do NOT create branches, push files, or create pull requests. Only discover issues and propose fixes." if dry_run else "Proceed with the full workflow: discover issues, fix files, and create a PR."}
@@ -359,6 +370,16 @@ Start by querying SonarQube for open issues in the project."""
                 func_args["author"] = bot_identity
             elif func_name == "create_branch":
                 func_args["from_branch"] = source_branch
+                branch_name_set = False
+                for key in ("branch", "branch_name", "name", "ref"):
+                    branch_value = func_args.get(key)
+                    if isinstance(branch_value, str) and branch_value:
+                        func_args[key] = _append_time_suffix(branch_value)
+                        branch_name_set = True
+                        break
+
+                if not branch_name_set:
+                    func_args["branch"] = default_fix_branch
             elif func_name == "create_pull_request":
                 existing_body = func_args.get("body", "")
                 func_args["body"] = (
