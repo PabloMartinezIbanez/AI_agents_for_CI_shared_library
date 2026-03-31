@@ -369,7 +369,10 @@ Start by querying SonarQube for open issues in the project."""
                 )
 
             log(f"\n🔧 Tool call: {func_name}")
-            log(f"   Args: {json.dumps(func_args, indent=2)[:500]}")
+            if func_name == "edit_file":
+                log(f"   Args: {json.dumps(func_args, indent=2)}")
+            else:
+                log(f"   Args: {json.dumps(func_args, indent=2)[:500]}")
 
             if dry_run and func_name in (
                 "create_branch", "push_files", "create_pull_request",
@@ -398,6 +401,8 @@ Start by querying SonarQube for open issues in the project."""
                         # Truncate very long results for logging
                         log_preview = result_text[:800] + ("..." if len(result_text) > 800 else "")
                         log(f"   ✅ Result ({len(result_text)} chars): {log_preview}")
+                        if func_name == "edit_file":
+                            log(f"   ✏️  Edited file: {edit_file_target}")
                     except Exception as e:
                         result_text = f"Error calling {func_name}: {e}"
                         log(f"   ❌ {result_text}")
