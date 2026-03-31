@@ -182,7 +182,6 @@ async def connect_servers(server_configs, exit_stack):
         for tool in server_tools:
             existing_owner = tool_owner.get(tool.name)
             if existing_owner is None:
-                log(f"      - {tool.name}")
                 all_tools_by_name[tool.name] = tool
                 tool_owner[tool.name] = name
                 tool_to_session[tool.name] = session
@@ -192,16 +191,9 @@ async def connect_servers(server_configs, exit_stack):
             new_prio = server_priority.get(name, 0)
 
             if new_prio > current_prio:
-                log(
-                    f"      - {tool.name} (replacing {existing_owner} with {name} due to higher priority)"
-                )
                 all_tools_by_name[tool.name] = tool
                 tool_owner[tool.name] = name
                 tool_to_session[tool.name] = session
-            else:
-                log(
-                    f"      - {tool.name} (skipping duplicate from {name}; keeping {existing_owner})"
-                )
 
     all_tools = list(all_tools_by_name.values())
     return sessions, all_tools, tool_to_session
@@ -512,8 +504,6 @@ async def async_main(args):
             log("❌ No tools discovered from any MCP server. Cannot proceed.")
             sys.exit(1)
 
-        log(f"\n📋 Total tools discovered: {len(all_tools)}")
-
         # Filter to only the tools the agent actually needs (reduces token usage)
         ALLOWED_TOOLS = {
             # SonarQube
@@ -534,7 +524,7 @@ async def async_main(args):
             "create_pull_request",
         }
         filtered_tools = [t for t in all_tools if t.name in ALLOWED_TOOLS]
-        log(f"   Filtered to {len(filtered_tools)} allowed tools: {[t.name for t in filtered_tools]}")
+        log(f"   ✅ MCP tools loaded: {len(filtered_tools)}")
 
         # Convert to OpenAI format for litellm
         openai_tools = mcp_tools_to_openai_format(filtered_tools)
