@@ -129,7 +129,11 @@ def build_server_configs(workspace, sonarqube_url, sonarqube_token, sonarqube_pr
 # ---------------------------------------------------------------------------
 
 async def connect_servers(server_configs, exit_stack):
-    """Connect to all MCP servers **in parallel** and return {name: session} + merged tool list."""
+    """Connect to MCP servers and return {name: session} + merged tool list.
+
+    Note: connections are opened on the same task that will close them via
+    `exit_stack` to avoid AnyIO cancel-scope task-affinity errors.
+    """
 
     # Higher number means higher priority when two servers expose same tool name.
     server_priority = {
@@ -139,45 +143,36 @@ async def connect_servers(server_configs, exit_stack):
         "filesystem": 10,
     }
 
-    async def _connect_one(name, params):
-        """Connect to a single MCP server, returning its session and tools."""
-        log(f"🔌 Connecting to MCP server: {name}...")
-        per_stack = AsyncExitStack()
-        try:
-            errlog = open(os.devnull, "w") if name == "sonarqube" else sys.stderr
-            stdio_transport = await per_stack.enter_async_context(
-                stdio_client(params, errlog=errlog)
-            )
-            read_stream, write_stream = stdio_transport
-            session = await per_stack.enter_async_context(
-                ClientSession(read_stream, write_stream)
-            )
-            await session.initialize()
-            response = await session.list_tools()
-            log(f"   ✅ {name}: {len(response.tools)} tools discovered")
-            return (name, per_stack, session, response.tools)
-        except Exception as e:
-            log(f"   ❌ Failed to connect to {name}: {e}")
-            await per_stack.aclose()
-            return (name, None, None, None)
-
-    # Launch all server connections in parallel
-    results = await asyncio.gather(
-        *[_connect_one(name, params) for name, params in server_configs.items()]
-    )
-
-    # Merge results sequentially (fast — just dict operations)
+    # Merge results (fast — just dict operations)
     sessions = {}
     all_tools_by_name = {}
     tool_owner = {}
     tool_to_session = {}
 
-    for name, per_stack, session, server_tools in results:
-        if session is None:
+    for name, params in server_configs.items():
+        log(f"🔌 Connecting to MCP server: {name}...")
+        try:
+            errlog = sys.stderr
+            if name == "sonarqube":
+                errlog = open(os.devnull, "w")
+                exit_stack.callback(errlog.close)
+
+            stdio_transport = await exit_stack.enter_async_context(
+                stdio_client(params, errlog=errlog)
+            )
+            read_stream, write_stream = stdio_transport
+            session = await exit_stack.enter_async_context(
+                ClientSession(read_stream, write_stream)
+            )
+            await session.initialize()
+            response = await session.list_tools()
+
+        except Exception as e:
+            log(f"   ❌ Failed to connect to {name}: {e}")
             continue
-        # Transfer ownership of per-server stack to parent for cleanup
-        exit_stack.push_async_callback(per_stack.aclose)
+
         sessions[name] = session
+        server_tools = response.tools
 
         for tool in server_tools:
             existing_owner = tool_owner.get(tool.name)
