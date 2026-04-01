@@ -129,11 +129,11 @@ def build_server_configs(workspace, sonarqube_url, sonarqube_token, sonarqube_pr
 # ---------------------------------------------------------------------------
 
 async def connect_servers(server_configs, exit_stack):
-    """Connect to all MCP servers and return {name: session} + merged tool list."""
-    sessions = {}
-    all_tools_by_name = {}
-    tool_owner = {}
-    tool_to_session = {}
+    """Connect to MCP servers and return {name: session} + merged tool list.
+
+    Note: connections are opened on the same task that will close them via
+    `exit_stack` to avoid AnyIO cancel-scope task-affinity errors.
+    """
 
     # Higher number means higher priority when two servers expose same tool name.
     server_priority = {
@@ -143,11 +143,20 @@ async def connect_servers(server_configs, exit_stack):
         "filesystem": 10,
     }
 
+    # Merge results (fast — just dict operations)
+    sessions = {}
+    all_tools_by_name = {}
+    tool_owner = {}
+    tool_to_session = {}
+
     for name, params in server_configs.items():
         log(f"🔌 Connecting to MCP server: {name}...")
         try:
-            # Suppress stderr for Docker-based servers to avoid noisy pipeline logs
-            errlog = open(os.devnull, "w") if name == "sonarqube" else sys.stderr
+            errlog = sys.stderr
+            if name == "sonarqube":
+                errlog = open(os.devnull, "w")
+                exit_stack.callback(errlog.close)
+
             stdio_transport = await exit_stack.enter_async_context(
                 stdio_client(params, errlog=errlog)
             )
@@ -156,37 +165,30 @@ async def connect_servers(server_configs, exit_stack):
                 ClientSession(read_stream, write_stream)
             )
             await session.initialize()
-            sessions[name] = session
-
-            # Discover tools from this server
             response = await session.list_tools()
-            server_tools = response.tools
-            log(f"   ✅ {name}: {len(server_tools)} tools discovered")
-            for tool in server_tools:
-                existing_owner = tool_owner.get(tool.name)
-                if existing_owner is None:
-                    log(f"      - {tool.name}")
-                    all_tools_by_name[tool.name] = tool
-                    tool_owner[tool.name] = name
-                    tool_to_session[tool.name] = session
-                    continue
 
-                current_prio = server_priority.get(existing_owner, 0)
-                new_prio = server_priority.get(name, 0)
-
-                if new_prio > current_prio:
-                    log(
-                        f"      - {tool.name} (replacing {existing_owner} with {name} due to higher priority)"
-                    )
-                    all_tools_by_name[tool.name] = tool
-                    tool_owner[tool.name] = name
-                    tool_to_session[tool.name] = session
-                else:
-                    log(
-                        f"      - {tool.name} (skipping duplicate from {name}; keeping {existing_owner})"
-                    )
         except Exception as e:
             log(f"   ❌ Failed to connect to {name}: {e}")
+            continue
+
+        sessions[name] = session
+        server_tools = response.tools
+
+        for tool in server_tools:
+            existing_owner = tool_owner.get(tool.name)
+            if existing_owner is None:
+                all_tools_by_name[tool.name] = tool
+                tool_owner[tool.name] = name
+                tool_to_session[tool.name] = session
+                continue
+
+            current_prio = server_priority.get(existing_owner, 0)
+            new_prio = server_priority.get(name, 0)
+
+            if new_prio > current_prio:
+                all_tools_by_name[tool.name] = tool
+                tool_owner[tool.name] = name
+                tool_to_session[tool.name] = session
 
     all_tools = list(all_tools_by_name.values())
     return sessions, all_tools, tool_to_session
@@ -251,7 +253,7 @@ You have access to MCP tools connected to:
       are pre-existing and unrelated to your changes).
     - Include the validation outcome in your final summary, even if no tests are configured.
 5. **Create a PR**: Once all fixes are applied:
-    - Use `create_branch` to create a new branch named `ai-fix/{source_branch}-{date}` (date = YYYYMMDD), explicitly setting `from_branch` to `{source_branch}`.
+    - Use `create_branch` to create a new branch named `ai-fix/{source_branch}-{date}-{time}` (date = YYYYMMDD, time = HHMMSS in UTC), explicitly setting `from_branch` to `{source_branch}`.
    - Use `push_files` to push ALL modified files in a single commit.
     - Use `create_pull_request` to open a PR. The title MUST follow this exact format:
       `[AI Fix][{source_branch}] {N} issue(s) fixed — {date}`
@@ -280,6 +282,16 @@ async def run_agent_loop(tool_to_session, openai_tools, model, system_prompt,
 
     owner, repo = repo_slug.split("/", 1)
     date_tag = datetime.now(timezone.utc).strftime("%Y%m%d")
+    branch_time_tag = datetime.now(timezone.utc).strftime("%H%M%S")
+    default_fix_branch = f"ai-fix/{source_branch}-{date_tag}-{branch_time_tag}"
+
+    def _append_time_suffix(branch_name):
+        if not isinstance(branch_name, str) or not branch_name:
+            return branch_name
+        suffix = f"-{branch_time_tag}"
+        if branch_name.endswith(suffix):
+            return branch_name
+        return f"{branch_name}{suffix}"
 
     # Initial user message with context
     user_message = f"""Fix all code quality issues in the project and create a Pull Request.
@@ -288,8 +300,9 @@ Context:
 - SonarQube project key: `{sonarqube_project_key}`
 - GitHub repository: `{owner}/{repo}`
 - Source branch: `{source_branch}`
-- Branch for fixes: `ai-fix/{source_branch}-{date_tag}`
+- Branch for fixes: `{default_fix_branch}`
 - Date tag: {date_tag}
+- Time tag (UTC): {branch_time_tag}
 - Dry run: {dry_run}
 
 {"NOTE: This is a DRY RUN. Do NOT create branches, push files, or create pull requests. Only discover issues and propose fixes." if dry_run else "Proceed with the full workflow: discover issues, fix files, and create a PR."}
@@ -334,7 +347,12 @@ Start by querying SonarQube for open issues in the project."""
                 log(f"📝 Final message:\n{message.content}")
             break
 
-        # Process each tool call
+        # ── Phase 1: Preprocess all tool calls sequentially (arg injection) ──
+        BOT_NAME = "Jenkins AI Bot"
+        BOT_EMAIL = "jenkinai@noreply.github.com"
+        bot_identity = {"name": BOT_NAME, "email": BOT_EMAIL}
+
+        preprocessed = []
         for tool_call in message.tool_calls:
             func_name = tool_call.function.name
             try:
@@ -342,25 +360,22 @@ Start by querying SonarQube for open issues in the project."""
             except json.JSONDecodeError:
                 func_args = {}
 
-            # Inject bot identity for all GitHub write operations
-            BOT_NAME = "Jenkins AI Bot"
-            BOT_EMAIL = "jenkinai@noreply.github.com"
-            bot_identity = {"name": BOT_NAME, "email": BOT_EMAIL}
-
             if func_name == "push_files":
-                # Attribute commits to the bot in git history
                 func_args["committer"] = bot_identity
                 func_args["author"] = bot_identity
-
-
             elif func_name == "create_branch":
-                # Always branch from the pipeline source branch instead of repo default branch.
-                # This prevents accidental branching from main when the LLM omits from_branch.
                 func_args["from_branch"] = source_branch
+                branch_name_set = False
+                for key in ("branch", "branch_name", "name", "ref"):
+                    branch_value = func_args.get(key)
+                    if isinstance(branch_value, str) and branch_value:
+                        func_args[key] = _append_time_suffix(branch_value)
+                        branch_name_set = True
+                        break
 
-
+                if not branch_name_set:
+                    func_args["branch"] = default_fix_branch
             elif func_name == "create_pull_request":
-                # Prepend bot attribution to the PR body
                 existing_body = func_args.get("body", "")
                 func_args["body"] = (
                     f"> 🤖 This branch and PR were created automatically by **{BOT_NAME}** "
@@ -368,9 +383,47 @@ Start by querying SonarQube for open issues in the project."""
                     f"{existing_body}"
                 )
 
+            preprocessed.append((tool_call, func_name, func_args))
+
+        # ── Phase 2: Execute all tool calls in parallel ──
+        DRY_RUN_TOOLS = {
+            "create_branch", "push_files", "create_pull_request",
+            "create_or_update_file", "write_file",
+        }
+
+        async def _execute_one(tool_call, func_name, func_args):
+            """Execute a single tool call. Returns (tool_call, func_name, func_args, result_text, status)."""
+            if dry_run and func_name in DRY_RUN_TOOLS:
+                result_text = f"[DRY RUN] Skipped {func_name} — would have been called with: {json.dumps(func_args)[:300]}"
+                return (tool_call, func_name, func_args, result_text, "dry_run")
+
+            session = tool_to_session.get(func_name)
+            if not session:
+                result_text = f"Error: Unknown tool '{func_name}'. Available tools: {list(tool_to_session.keys())}"
+                return (tool_call, func_name, func_args, result_text, "error")
+
+            try:
+                result = await session.call_tool(func_name, func_args)
+                if result.content:
+                    result_text = "\n".join(
+                        item.text for item in result.content
+                        if hasattr(item, "text")
+                    )
+                else:
+                    result_text = "(empty result)"
+                return (tool_call, func_name, func_args, result_text, "ok")
+            except Exception as e:
+                result_text = f"Error calling {func_name}: {e}"
+                return (tool_call, func_name, func_args, result_text, "error")
+
+        results = await asyncio.gather(
+            *[_execute_one(tc, fn, fa) for tc, fn, fa in preprocessed]
+        )
+
+        # ── Phase 3: Log results and add to messages (in original order) ──
+        for tool_call, func_name, func_args, result_text, status in results:
             log(f"\n🔧 Tool call: {func_name}")
             if func_name == "edit_file":
-                # Keep a stable key order in logs: path first, then edits.
                 edit_file_args_for_log = {
                     "path": func_args.get("path"),
                     "edits": func_args.get("edits"),
@@ -382,38 +435,14 @@ Start by querying SonarQube for open issues in the project."""
             else:
                 log(f"   Args: {json.dumps(func_args, indent=2)[:500]}")
 
-            if dry_run and func_name in (
-                "create_branch", "push_files", "create_pull_request",
-                "create_or_update_file", "write_file",
-            ):
-                result_text = f"[DRY RUN] Skipped {func_name} — would have been called with: {json.dumps(func_args)[:300]}"
+            if status == "dry_run":
                 log(f"   🏜️  {result_text}")
+            elif status == "error":
+                log(f"   ❌ {result_text}")
             else:
-                # Dispatch to the correct MCP server session
-                session = tool_to_session.get(func_name)
-                if not session:
-                    result_text = f"Error: Unknown tool '{func_name}'. Available tools: {list(tool_to_session.keys())}"
-                    log(f"   ❌ {result_text}")
-                else:
-                    try:
-                        result = await session.call_tool(func_name, func_args)
-                        # Extract text content from MCP result
-                        if result.content:
-                            result_text = "\n".join(
-                                item.text for item in result.content
-                                if hasattr(item, "text")
-                            )
-                        else:
-                            result_text = "(empty result)"
+                log_preview = result_text[:600] + ("..." if len(result_text) > 600 else "")
+                log(f"   ✅ Result ({len(result_text)} chars): {log_preview}")
 
-                        # Truncate very long results for logging
-                        log_preview = result_text[:600] + ("..." if len(result_text) > 600 else "")
-                        log(f"   ✅ Result ({len(result_text)} chars): {log_preview}")
-                    except Exception as e:
-                        result_text = f"Error calling {func_name}: {e}"
-                        log(f"   ❌ {result_text}")
-
-            # Add tool result to message history
             messages.append({
                 "role": "tool",
                 "tool_call_id": tool_call.id,
@@ -491,8 +520,6 @@ async def async_main(args):
             log("❌ No tools discovered from any MCP server. Cannot proceed.")
             sys.exit(1)
 
-        log(f"\n📋 Total tools discovered: {len(all_tools)}")
-
         # Filter to only the tools the agent actually needs (reduces token usage)
         ALLOWED_TOOLS = {
             # SonarQube
@@ -513,7 +540,7 @@ async def async_main(args):
             "create_pull_request",
         }
         filtered_tools = [t for t in all_tools if t.name in ALLOWED_TOOLS]
-        log(f"   Filtered to {len(filtered_tools)} allowed tools: {[t.name for t in filtered_tools]}")
+        log(f"   ✅ MCP tools loaded: {len(filtered_tools)}")
 
         # Convert to OpenAI format for litellm
         openai_tools = mcp_tools_to_openai_format(filtered_tools)
