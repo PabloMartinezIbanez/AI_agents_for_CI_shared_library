@@ -16,17 +16,12 @@ Reusable Jenkins Shared Library for the thesis workspace. This repository contai
 |-- docs/
 |   |-- fixwithai-contract.md
 |   `-- test-config-contract.md
-|-- pom.xml
 |-- resources/
 |   `-- scripts/
 |       |-- mcp_agent.py
 |       |-- requirements-ai.txt
 |       `-- mcp_servers/
 |           `-- test_runner_server.py
-|-- src/test/groovy/
-|   |-- FixWithAITest.groovy
-|   `-- support/
-`-- tests/python/
 ```
 
 ## Runtime model
@@ -66,23 +61,3 @@ When the MCP agent runs through `FixWithAI(...)`, the runtime writes structured 
 - `validation_results.json`
 
 These artifacts are meant to support debugging, reproducibility, and thesis evidence collection.
-
-## Testing
-
-### Python tests
-
-```bash
-pytest tests/python -q
-```
-
-### Groovy contract tests
-
-Locally verified with JDK 21 plus Maven:
-
-```powershell
-$env:JAVA_HOME='C:\Program Files\Java\jdk-21'
-$env:Path="$env:JAVA_HOME\bin;$env:Path"
-mvn -q test
-```
-
-The Groovy suite is intentionally lightweight: it validates contract and preflight behavior of the Jenkins steps without requiring a full Jenkins test harness.
