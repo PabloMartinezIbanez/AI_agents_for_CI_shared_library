@@ -44,3 +44,7 @@ Thumbs.db
 
 # node modules
 node_modules/
+
+# Test/build outputs
+.pytest_cache/
+target/

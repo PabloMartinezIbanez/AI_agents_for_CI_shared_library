@@ -34,6 +34,7 @@ Uso:
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 
@@ -64,7 +65,43 @@ _NODE_TEST_SUFFIXES = (
 # --------------------------------------------------------------------------
 
 
-def _run_command(cmd, cwd=None, timeout=120, shell=False):
+def _strip_wrapping_quotes(token):
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in ("'", '"'):
+        return token[1:-1]
+    return token
+
+
+def _split_command(command):
+    posix = os.name != "nt"
+    return [_strip_wrapping_quotes(token) for token in shlex.split(command, posix=posix)]
+
+
+def _prepare_command(command, extra_args=""):
+    tokens = _split_command(command)
+    if not tokens:
+        raise ValueError("Command cannot be empty")
+
+    env_updates = {}
+    argv = []
+    assignment_pattern = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*$")
+
+    for token in tokens:
+        if not argv and assignment_pattern.match(token):
+            key, value = token.split("=", 1)
+            env_updates[key] = value
+            continue
+        argv.append(token)
+
+    if not argv:
+        raise ValueError("Command must include an executable")
+
+    if extra_args:
+        argv.extend(_split_command(extra_args))
+
+    return argv, env_updates
+
+
+def _run_command(cmd, cwd=None, timeout=120, env=None):
     """Run a command and return a result dict."""
     try:
         proc = subprocess.run(
@@ -73,7 +110,8 @@ def _run_command(cmd, cwd=None, timeout=120, shell=False):
             text=True,
             cwd=cwd or WORKSPACE,
             timeout=timeout,
-            shell=shell,
+            shell=False,
+            env=env,
         )
         output = ""
         if proc.stdout:
@@ -216,8 +254,22 @@ def run_suite(workspace, suite, extra_args=""):
     # --- setup step ---
     setup_cmd = suite.get("setup")
     if setup_cmd:
+        try:
+            setup_argv, setup_env_updates = _prepare_command(setup_cmd)
+        except ValueError as exc:
+            return {
+                **result_base,
+                "returncode": -1,
+                "output": f"[setup invalid]\n{exc}",
+                "passed": False,
+                "status": "error",
+            }
+
         setup_result = _run_command(
-            setup_cmd, cwd=workspace, timeout=timeout, shell=True,
+            setup_argv,
+            cwd=workspace,
+            timeout=timeout,
+            env={**os.environ, **setup_env_updates},
         )
         if setup_result["returncode"] != 0:
             return {
@@ -229,12 +281,22 @@ def run_suite(workspace, suite, extra_args=""):
             }
 
     # --- test command ---
-    command = suite["command"]
-    if extra_args:
-        command = f"{command} {extra_args}"
+    try:
+        command_argv, command_env_updates = _prepare_command(suite["command"], extra_args)
+    except ValueError as exc:
+        return {
+            **result_base,
+            "returncode": -1,
+            "output": str(exc),
+            "passed": False,
+            "status": "error",
+        }
 
     test_result = _run_command(
-        command, cwd=workspace, timeout=timeout, shell=True,
+        command_argv,
+        cwd=workspace,
+        timeout=timeout,
+        env={**os.environ, **command_env_updates},
     )
 
     return {

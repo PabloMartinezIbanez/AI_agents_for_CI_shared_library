@@ -17,6 +17,7 @@ import os
 import sys
 from contextlib import AsyncExitStack
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
 # ---------------------------------------------------------------------------
@@ -30,11 +31,103 @@ from mcp.client.stdio import stdio_client
 # 1. MCP Server definitions
 # ---------------------------------------------------------------------------
 
+def resolve_env_value(*names, default=""):
+    for name in names:
+        value = os.environ.get(name, "")
+        if value:
+            return value
+    return default
+
+
+def resolve_reports_dir(workspace):
+    raw_reports_dir = resolve_env_value("AI_REPORTS_DIR", "AGENT_REPORTS_DIR")
+    if not raw_reports_dir:
+        raw_reports_dir = os.path.join(workspace, "reports_for_IA")
+    if not os.path.isabs(raw_reports_dir):
+        raw_reports_dir = os.path.join(workspace, raw_reports_dir)
+    return os.path.abspath(raw_reports_dir)
+
+
+def write_json_artifact(reports_dir, filename, payload):
+    Path(reports_dir).mkdir(parents=True, exist_ok=True)
+    output_path = Path(reports_dir) / filename
+    output_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return str(output_path)
+
+
+def extract_validation_results(messages):
+    aggregated_results = []
+
+    for message in messages:
+        if message.get("role") != "tool":
+            continue
+
+        content = message.get("content")
+        if not isinstance(content, str):
+            continue
+
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError:
+            continue
+
+        if isinstance(payload, dict) and isinstance(payload.get("results"), list):
+            aggregated_results.extend(payload["results"])
+
+    return {"results": aggregated_results}
+
+
+def persist_agent_artifacts(
+    reports_dir,
+    *,
+    repo_slug,
+    source_branch,
+    workspace,
+    model,
+    dry_run,
+    max_iterations,
+    messages,
+    status,
+    error_message="",
+):
+    validation_results = extract_validation_results(messages)
+    assistant_messages = [msg for msg in messages if msg.get("role") == "assistant"]
+    final_assistant_message = assistant_messages[-1]["content"] if assistant_messages else ""
+
+    summary = {
+        "generatedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "status": status,
+        "error": error_message,
+        "repo": repo_slug,
+        "sourceBranch": source_branch,
+        "workspace": workspace,
+        "model": model,
+        "dryRun": dry_run,
+        "maxIterations": max_iterations,
+        "reportsDir": reports_dir,
+        "messageCount": len(messages),
+        "toolMessageCount": sum(1 for message in messages if message.get("role") == "tool"),
+        "finalAssistantMessage": final_assistant_message,
+        "validationSummary": {
+            "totalSuites": len(validation_results["results"]),
+            "passedSuites": sum(1 for result in validation_results["results"] if result.get("passed")),
+            "failedSuites": sum(1 for result in validation_results["results"] if not result.get("passed")),
+        },
+    }
+
+    write_json_artifact(reports_dir, "agent_summary.json", summary)
+    write_json_artifact(reports_dir, "validation_results.json", validation_results)
+
+
 def build_server_configs(workspace, sonarqube_url, sonarqube_token, sonarqube_project_key,
                          github_token):
     """Define the MCP servers to connect to (same ones as in VS Code mcp.json)."""
     servers = {}
     test_runner_script = os.path.join(workspace, ".ai_fixer", "mcp_servers", "test_runner_server.py")
+    reports_dir = resolve_reports_dir(workspace)
 
     def _normalize_url_for_docker(raw_url):
         """Map localhost-style URLs to a host reachable from inside Docker."""
@@ -95,6 +188,7 @@ def build_server_configs(workspace, sonarqube_url, sonarqube_token, sonarqube_pr
         test_runner_env = {
             **os.environ,
             "WORKSPACE_ROOT": workspace,
+            "AI_REPORTS_DIR": reports_dir,
         }
         # Forward custom config path if set by pipeline
         ai_test_config = os.environ.get("AI_TEST_CONFIG_FILE", "")
@@ -470,11 +564,15 @@ def log(msg):
 
 async def async_main(args):
     workspace = os.path.abspath(args.workspace)
-    model = args.model or os.environ.get("LLM_MODEL") or "gemini/gemini-2.0-flash"
-    github_token = os.environ.get("Github_AI_Auth", "")
-    sonarqube_url = os.environ.get("SONARQUBE_URL", "")
-    sonarqube_token = os.environ.get("SONARQUBE_TOKEN", "")
-    sonarqube_project_key = os.environ.get("SONARQUBE_EFFECTIVE_PROJECT_KEY","")
+    reports_dir = resolve_reports_dir(workspace)
+    model = args.model or resolve_env_value("LLM_MODEL") or "gemini/gemini-2.0-flash"
+    github_token = resolve_env_value("GITHUB_PERSONAL_ACCESS_TOKEN", "Github_AI_Auth")
+    sonarqube_url = resolve_env_value("SONARQUBE_URL")
+    sonarqube_token = resolve_env_value("SONARQUBE_TOKEN")
+    sonarqube_project_key = resolve_env_value(
+        "SONARQUBE_EFFECTIVE_PROJECT_KEY",
+        "SONARQUBE_PROJECT_KEY",
+    )
 
     log("=" * 60)
     log("🤖  MCP AI Agent")
@@ -506,6 +604,9 @@ async def async_main(args):
 
     # --- Connect to MCP servers ---
     log("\n📡 Connecting to MCP servers...")
+    messages = []
+    status = "failed"
+    error_message = ""
     async with AsyncExitStack() as exit_stack:
         sessions, all_tools, tool_to_session = await connect_servers(
             server_configs, exit_stack
@@ -558,17 +659,35 @@ async def async_main(args):
 
         # --- Run agent loop ---
         log("\n🚀 Starting agent loop...")
-        messages = await run_agent_loop(
-            tool_to_session=tool_to_session,
-            openai_tools=openai_tools,
-            model=model,
-            system_prompt=system_prompt,
-            repo_slug=args.repo,
-            source_branch=args.source_branch,
-            sonarqube_project_key=sonarqube_project_key,
-            max_iterations=args.max_iterations,
-            dry_run=args.dry_run,
-        )
+        try:
+            messages = await run_agent_loop(
+                tool_to_session=tool_to_session,
+                openai_tools=openai_tools,
+                model=model,
+                system_prompt=system_prompt,
+                repo_slug=args.repo,
+                source_branch=args.source_branch,
+                sonarqube_project_key=sonarqube_project_key,
+                max_iterations=args.max_iterations,
+                dry_run=args.dry_run,
+            )
+            status = "completed"
+        except Exception as exc:
+            error_message = str(exc)
+            raise
+        finally:
+            persist_agent_artifacts(
+                reports_dir,
+                repo_slug=args.repo,
+                source_branch=args.source_branch,
+                workspace=workspace,
+                model=model,
+                dry_run=args.dry_run,
+                max_iterations=args.max_iterations,
+                messages=messages,
+                status=status,
+                error_message=error_message,
+            )
 
         log(f"\n✅ Agent completed. Total messages exchanged: {len(messages)}")
 
