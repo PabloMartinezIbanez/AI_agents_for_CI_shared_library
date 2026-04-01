@@ -4,7 +4,6 @@ def call(Map config = [:]) {
     def llmCredentialId = config.llmCredentialId ?: 'Gemini_Api_token'
     def githubCredentialId = config.githubCredentialId ?: 'GITHUB_PAT'
     def repoSlug = config.repoSlug ?: ''
-    def reportsDir = config.reportsDir ?: (env.AI_REPORTS_DIR ?: 'reports_for_IA')
     def dryRun = config.dryRun ?: false
     def maxIterations = config.maxIterations ?: 25
     def sonarqubeCredentialId = config.sonarqubeCredentialId ?: 'SONARQUBE_TOKEN'
@@ -16,9 +15,6 @@ def call(Map config = [:]) {
         def preparedAiFixer = false
 
         try {
-            if (!reportsDir?.trim()) {
-                error 'reportsDir no puede estar vacío. Pásalo en config.reportsDir o define env.AI_REPORTS_DIR.'
-            }
             if (!sonarqubeUrl?.trim()) {
                 error 'SONARQUBE_URL no está definido. Pásalo en config.sonarqubeUrl o en env.SONARQUBE_URL.'
             }
@@ -120,8 +116,7 @@ def call(Map config = [:]) {
                     export Github_AI_Auth="\${Github_AI_Auth}"
                     export SONARQUBE_URL='${sonarqubeUrl}'
                     export SONARQUBE_TOKEN="\${SONARQUBE_TOKEN}"
-                    export SONARQUBE_EFFECTIVE_PROJECT_KEY='${sonarqubeProjectKey}'
-                    export AI_REPORTS_DIR='${reportsDir}'
+                    export SONARQUBE_EFFECTIVE_PROJECT_KEY='${sonarqubeProjectKey}''
                     ${testConfigFile ? "export AI_TEST_CONFIG_FILE='${testConfigFile}'" : ''}
 
                     python3 .ai_fixer/mcp_agent.py \

@@ -55,13 +55,12 @@ Main inputs:
 - LLM provider credential exported by `FixWithAI(...)`
 - GitHub PAT exported as `GITHUB_PERSONAL_ACCESS_TOKEN`
 - Optional `AI_TEST_CONFIG_FILE`
-- Optional `AI_REPORTS_DIR`
 
 See the contract documents for the exact parameter-level behavior.
 
 ## Structured artifacts
 
-When the MCP agent runs through `FixWithAI(...)`, the runtime can write structured artifacts to `AI_REPORTS_DIR`:
+When the MCP agent runs through `FixWithAI(...)`, the runtime writes structured artifacts to `reports_for_IA/` in the workspace:
 
 - `agent_summary.json`
 - `validation_results.json`

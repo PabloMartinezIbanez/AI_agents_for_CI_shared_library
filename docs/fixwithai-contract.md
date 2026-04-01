@@ -17,7 +17,6 @@
 - `githubCredentialId`: Jenkins string credential for the GitHub PAT.
 - `sonarqubeCredentialId`: Jenkins string credential for the SonarQube token.
 - `repoSlug`: GitHub repository slug in `owner/repo` form. If omitted, the step tries to infer it from `origin`.
-- `reportsDir`: directory where AI-facing artifacts are written. Defaults to `env.AI_REPORTS_DIR` or `reports_for_IA`.
 - `dryRun`: when `true`, forwards `--dry-run` to the MCP agent and skips branch/PR mutations inside the agent workflow.
 - `maxIterations`: maximum reasoning loop iterations for the agent. Must be a positive number.
 - `sonarqubeUrl`: explicit override for `SONARQUBE_URL`.
@@ -41,7 +40,7 @@ Exported to the Python runtime:
 - `SONARQUBE_URL`
 - `SONARQUBE_TOKEN`
 - `SONARQUBE_EFFECTIVE_PROJECT_KEY`
-- `AI_REPORTS_DIR`
+- `AGENT_REPORTS_DIR`
 - optional `AI_TEST_CONFIG_FILE`
 
 ## Branch behavior
@@ -58,7 +57,7 @@ Exported to the Python runtime:
 
 ## Structured artifacts
 
-The Python runtime may write these files into `reportsDir`:
+The Python runtime may write these files into `reports_for_IA/` inside the workspace:
 
 - `agent_summary.json`
 - `validation_results.json`
@@ -67,7 +66,6 @@ The Python runtime may write these files into `reportsDir`:
 
 The step aborts early when:
 
-- `reportsDir` is empty;
 - `SONARQUBE_URL` is missing;
 - `SONARQUBE_EFFECTIVE_PROJECT_KEY` is missing;
 - `maxIterations` is not positive;
@@ -77,7 +75,6 @@ The step aborts early when:
 
 ```groovy
 FixWithAI(
-    reportsDir: env.AI_REPORTS_DIR,
     llmModel: 'gemini-3.1-pro-preview',
     llmCredentialId: 'LLM_API_KEY_VALUE',
     githubCredentialId: 'Github_AI_Auth',

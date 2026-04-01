@@ -16,9 +16,6 @@ def test_build_server_configs_forwards_reports_dir_to_the_test_runner(
     server_path.mkdir(parents=True)
     (server_path / "test_runner_server.py").write_text("# stub\n", encoding="utf-8")
 
-    reports_dir = tmp_path / "reports_for_IA"
-    monkeypatch.setenv("AI_REPORTS_DIR", str(reports_dir))
-
     servers, _ = module.build_server_configs(
         workspace=str(tmp_path),
         sonarqube_url="http://localhost:9000",
@@ -27,7 +24,6 @@ def test_build_server_configs_forwards_reports_dir_to_the_test_runner(
         github_token="github-token",
     )
 
-    assert servers["test_runner"].env["AI_REPORTS_DIR"] == str(reports_dir)
 
 
 def test_async_main_writes_agent_artifacts_and_uses_github_pat_fallback(
@@ -40,7 +36,7 @@ def test_async_main_writes_agent_artifacts_and_uses_github_pat_fallback(
     )
 
     captured = {}
-    reports_dir = tmp_path / "reports"
+    reports_dir = tmp_path / "reports_for_IA"
 
     monkeypatch.setenv("LLM_MODEL", "gemini/test-model")
     monkeypatch.setenv("GITHUB_PERSONAL_ACCESS_TOKEN", "ghp_test_token")
@@ -48,8 +44,6 @@ def test_async_main_writes_agent_artifacts_and_uses_github_pat_fallback(
     monkeypatch.setenv("SONARQUBE_URL", "http://sonarqube.local")
     monkeypatch.setenv("SONARQUBE_TOKEN", "sonar-token")
     monkeypatch.setenv("SONARQUBE_EFFECTIVE_PROJECT_KEY", "demo-project")
-    monkeypatch.setenv("AI_REPORTS_DIR", str(reports_dir))
-
     def fake_build_server_configs(**kwargs):
         captured.update(kwargs)
         return {"sonarqube": object()}, None

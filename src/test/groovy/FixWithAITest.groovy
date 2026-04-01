@@ -37,7 +37,7 @@ class FixWithAITest {
     }
 
     @Test
-    void "exports reports directory and dry run flag to the agent runtime"() {
+    void "uses default reports directory and dry run flag in the agent runtime"() {
         PipelineTestScript script = loadScript()
         script.resources.put("scripts/mcp_agent.py", "print('agent')")
         script.resources.put("scripts/mcp_servers/test_runner_server.py", "print('runner')")
@@ -52,12 +52,12 @@ class FixWithAITest {
             llmCredentialId: "LLM_TOKEN",
             githubCredentialId: "GITHUB_PAT",
             sonarqubeCredentialId: "SONAR_TOKEN",
-            reportsDir: "reports_for_IA",
             dryRun: true,
         ])
 
         String command = script.shellCommands.find { it.contains("python3 .ai_fixer/mcp_agent.py") }
-        assertTrue(command.contains("export AI_REPORTS_DIR='reports_for_IA'"))
+        assertTrue(command.contains("mkdir -p 'reports_for_IA'"))
+        assertTrue(command.contains("export AGENT_REPORTS_DIR='reports_for_IA'"))
         assertTrue(command.contains("--dry-run"))
     }
 }

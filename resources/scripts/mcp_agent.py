@@ -40,7 +40,6 @@ def resolve_env_value(*names, default=""):
 
 
 def resolve_reports_dir(workspace):
-    raw_reports_dir = resolve_env_value("AI_REPORTS_DIR", "AGENT_REPORTS_DIR")
     if not raw_reports_dir:
         raw_reports_dir = os.path.join(workspace, "reports_for_IA")
     if not os.path.isabs(raw_reports_dir):
@@ -188,7 +187,7 @@ def build_server_configs(workspace, sonarqube_url, sonarqube_token, sonarqube_pr
         test_runner_env = {
             **os.environ,
             "WORKSPACE_ROOT": workspace,
-            "AI_REPORTS_DIR": reports_dir,
+            "AGENT_REPORTS_DIR": reports_dir,
         }
         # Forward custom config path if set by pipeline
         ai_test_config = os.environ.get("AI_TEST_CONFIG_FILE", "")
