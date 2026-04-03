@@ -5,7 +5,8 @@ Reusable Jenkins Shared Library for the thesis workspace. This repository contai
 ## What this repository provides
 
 - `FixWithAI(...)`: remediation step that prepares the MCP runtime, injects credentials, enforces preflight checks, and launches the agent.
-- `resources/scripts/mcp_agent.py`: the MCP-based Python agent.
+- `resources/scripts/mcp_agent.py`: compatibility wrapper for the MCP-based Python agent.
+- `resources/scripts/mcp_agent_pkg/`: internal MCP runtime package split by responsibility.
 - `resources/scripts/mcp_servers/test_runner_server.py`: local MCP server for configured test discovery, execution, and failure analysis.
 
 ## Repository structure
@@ -19,6 +20,16 @@ Reusable Jenkins Shared Library for the thesis workspace. This repository contai
 |-- resources/
 |   `-- scripts/
 |       |-- mcp_agent.py
+|       |-- mcp_agent_pkg/
+|       |   |-- README.md
+|       |   |-- agent_loop.py
+|       |   |-- artifacts.py
+|       |   |-- entrypoint.py
+|       |   |-- env_config.py
+|       |   |-- logging_utils.py
+|       |   |-- mcp_client.py
+|       |   |-- servers.py
+|       |   `-- system_prompt.md
 |       |-- requirements-ai.txt
 |       `-- mcp_servers/
 |           `-- test_runner_server.py
@@ -37,6 +48,7 @@ The intended deployment model is:
 
 - [`FixWithAI` contract](docs/fixwithai-contract.md)
 - [`ai-tests-config.json` and `.ai-tests.json` contract](docs/test-config-contract.md)
+- [`MCP agent architecture`](docs/mcp-agent-architecture.md)
 
 ## Credentials and environment
 
