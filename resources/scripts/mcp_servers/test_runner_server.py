@@ -34,6 +34,7 @@ Uso:
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 
@@ -52,6 +53,10 @@ WORKSPACE = os.environ.get("WORKSPACE_ROOT", ".")
 DEFAULT_CONFIG_FILENAME = ".ai-tests.json"
 DEFAULT_TIMEOUT = 120
 SUPPORTED_FRAMEWORKS = ("pytest", "node", "generic")
+PYTEST_EXECUTABLES = {"pytest", "python", "python3", "py"}
+NODE_EXECUTABLES = {"node", "nodejs", "npm", "npx"}
+SETUP_EXECUTABLES = PYTEST_EXECUTABLES | NODE_EXECUTABLES | {"pip", "pip3"}
+UNSAFE_EXTRA_ARG_MARKERS = (";", "&&", "||", "|", ">", "<", "`", "$(", "\n", "\r")
 
 # Suffixes used by _is_test_file heuristic (kept for analyze_failures)
 _NODE_TEST_SUFFIXES = (
@@ -64,7 +69,86 @@ _NODE_TEST_SUFFIXES = (
 # --------------------------------------------------------------------------
 
 
-def _run_command(cmd, cwd=None, timeout=120, shell=False):
+def _strip_wrapping_quotes(token):
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in ("'", '"'):
+        return token[1:-1]
+    return token
+
+
+def _split_command(command):
+    posix = os.name != "nt"
+    return [_strip_wrapping_quotes(token) for token in shlex.split(command, posix=posix)]
+
+
+def _prepare_command(command, extra_args=""):
+    tokens = _split_command(command)
+    if not tokens:
+        raise ValueError("Command cannot be empty")
+
+    env_updates = {}
+    argv = []
+    assignment_pattern = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*$")
+
+    for token in tokens:
+        if not argv and assignment_pattern.match(token):
+            key, value = token.split("=", 1)
+            env_updates[key] = value
+            continue
+        argv.append(token)
+
+    if not argv:
+        raise ValueError("Command must include an executable")
+
+    if extra_args:
+        _validate_extra_args(extra_args)
+        argv.extend(_split_command(extra_args))
+
+    return argv, env_updates
+
+
+def _validate_extra_args(extra_args):
+    for marker in UNSAFE_EXTRA_ARG_MARKERS:
+        if marker in extra_args:
+            raise ValueError("extra_args contains unsafe shell-like tokens")
+
+
+def _validate_path_inside_workspace(workspace, raw_path, *, label):
+    normalized_path = os.path.abspath(os.path.join(workspace, raw_path))
+    workspace_root = os.path.abspath(workspace)
+    if os.path.commonpath([workspace_root, normalized_path]) != workspace_root:
+        raise ValueError(f"{label} must stay inside the workspace")
+
+
+def _validate_suite_security(workspace, suite, path):
+    name = suite["name"]
+    framework = suite.get("framework", "generic")
+    command_argv, _ = _prepare_command(suite["command"])
+    executable = os.path.basename(command_argv[0]).lower()
+
+    if framework == "pytest" and executable not in PYTEST_EXECUTABLES:
+        raise ValueError(
+            f"{path}: suite '{name}' must use an approved executable for framework 'pytest': {sorted(PYTEST_EXECUTABLES)}"
+        )
+    if framework == "node" and executable not in NODE_EXECUTABLES:
+        raise ValueError(
+            f"{path}: suite '{name}' must use an approved executable for framework 'node': {sorted(NODE_EXECUTABLES)}"
+        )
+
+    setup_cmd = suite.get("setup")
+    if setup_cmd:
+        setup_argv, _ = _prepare_command(setup_cmd)
+        setup_executable = os.path.basename(setup_argv[0]).lower()
+        if setup_executable not in SETUP_EXECUTABLES:
+            raise ValueError(
+                f"{path}: suite '{name}' setup must use an approved executable: {sorted(SETUP_EXECUTABLES)}"
+            )
+
+    test_dir = suite.get("test_dir")
+    if isinstance(test_dir, str) and test_dir.strip():
+        _validate_path_inside_workspace(workspace, test_dir, label=f"{path}: suite '{name}' test_dir")
+
+
+def _run_command(cmd, cwd=None, timeout=120, env=None):
     """Run a command and return a result dict."""
     try:
         proc = subprocess.run(
@@ -73,7 +157,8 @@ def _run_command(cmd, cwd=None, timeout=120, shell=False):
             text=True,
             cwd=cwd or WORKSPACE,
             timeout=timeout,
-            shell=shell,
+            shell=False,
+            env=env,
         )
         output = ""
         if proc.stdout:
@@ -158,6 +243,8 @@ def _load_config(workspace):
         if not isinstance(timeout, (int, float)) or timeout <= 0:
             raise ValueError(f"{path}: suite '{name}' timeout must be a positive number")
 
+        _validate_suite_security(workspace, suite, path)
+
     return data
 
 
@@ -216,8 +303,22 @@ def run_suite(workspace, suite, extra_args=""):
     # --- setup step ---
     setup_cmd = suite.get("setup")
     if setup_cmd:
+        try:
+            setup_argv, setup_env_updates = _prepare_command(setup_cmd)
+        except ValueError as exc:
+            return {
+                **result_base,
+                "returncode": -1,
+                "output": f"[setup invalid]\n{exc}",
+                "passed": False,
+                "status": "error",
+            }
+
         setup_result = _run_command(
-            setup_cmd, cwd=workspace, timeout=timeout, shell=True,
+            setup_argv,
+            cwd=workspace,
+            timeout=timeout,
+            env={**os.environ, **setup_env_updates},
         )
         if setup_result["returncode"] != 0:
             return {
@@ -229,12 +330,22 @@ def run_suite(workspace, suite, extra_args=""):
             }
 
     # --- test command ---
-    command = suite["command"]
-    if extra_args:
-        command = f"{command} {extra_args}"
+    try:
+        command_argv, command_env_updates = _prepare_command(suite["command"], extra_args)
+    except ValueError as exc:
+        return {
+            **result_base,
+            "returncode": -1,
+            "output": str(exc),
+            "passed": False,
+            "status": "error",
+        }
 
     test_result = _run_command(
-        command, cwd=workspace, timeout=timeout, shell=True,
+        command_argv,
+        cwd=workspace,
+        timeout=timeout,
+        env={**os.environ, **command_env_updates},
     )
 
     return {
