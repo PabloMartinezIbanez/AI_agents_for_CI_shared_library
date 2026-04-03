@@ -133,6 +133,7 @@ Start by querying SonarQube for open issues in the project."""
             "push_files",
             "create_pull_request",
             "create_or_update_file",
+            "edit_file",
             "write_file",
         }
 

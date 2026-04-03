@@ -10,6 +10,11 @@ def call(Map config = [:]) {
     def sonarqubeUrl = config.sonarqubeUrl ?: (env.SONARQUBE_URL ?: '')
     def sonarqubeProjectKey = config.sonarqubeProjectKey ?: (env.SONARQUBE_EFFECTIVE_PROJECT_KEY ?: '')
     def testConfigFile = config.testConfigFile ?: ''
+    def reportsDir = (config.reportsDir ?: (env.AI_REPORTS_DIR ?: 'reports_for_IA')).toString().trim()
+    def shellQuote = { value ->
+        def normalized = (value ?: '').toString().replace("'", "'\"'\"'")
+        return "'${normalized}'"
+    }
 
     script {
         def preparedAiFixer = false
@@ -24,18 +29,45 @@ def call(Map config = [:]) {
             if (!(maxIterations instanceof Number) || maxIterations <= 0) {
                 error 'maxIterations debe ser un número positivo.'
             }
+            if (!reportsDir) {
+                error 'reportsDir no puede estar vacío.'
+            }
+            if (reportsDir.contains('..')) {
+                error "reportsDir '${reportsDir}' no puede contener '..'."
+            }
+            if (repoSlug?.trim() && !(repoSlug ==~ /[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/)) {
+                error "repoSlug '${repoSlug}' no tiene el formato esperado owner/repo."
+            }
+            if (testConfigFile?.trim() && !fileExists(testConfigFile)) {
+                error "testConfigFile '${testConfigFile}' no existe en el workspace."
+            }
 
             // ── 1. Extraer scripts MCP de la shared library ──
             def mcpAgentScript = libraryResource 'scripts/mcp_agent.py'
             def testRunnerScript = libraryResource 'scripts/mcp_servers/test_runner_server.py'
             def aiRequirements = libraryResource 'scripts/requirements-ai.txt'
+            def mcpAgentPackageResources = [
+                'scripts/mcp_agent_pkg/__init__.py',
+                'scripts/mcp_agent_pkg/agent_loop.py',
+                'scripts/mcp_agent_pkg/artifacts.py',
+                'scripts/mcp_agent_pkg/entrypoint.py',
+                'scripts/mcp_agent_pkg/env_config.py',
+                'scripts/mcp_agent_pkg/logging_utils.py',
+                'scripts/mcp_agent_pkg/mcp_client.py',
+                'scripts/mcp_agent_pkg/servers.py',
+                'scripts/mcp_agent_pkg/system_prompt.md',
+            ]
 
-            sh 'mkdir -p .ai_fixer .ai_fixer/mcp_servers'
+            sh 'mkdir -p .ai_fixer .ai_fixer/mcp_servers .ai_fixer/mcp_agent_pkg'
             preparedAiFixer = true
             writeFile file: '.ai_fixer/mcp_agent.py', text: mcpAgentScript
             writeFile file: '.ai_fixer/requirements-ai.txt', text: aiRequirements
             writeFile file: '.ai_fixer/mcp_servers/__init__.py', text: ''
             writeFile file: '.ai_fixer/mcp_servers/test_runner_server.py', text: testRunnerScript
+            for (resourcePath in mcpAgentPackageResources) {
+                def targetPath = resourcePath.replaceFirst(/^scripts\//, '')
+                writeFile file: ".ai_fixer/${targetPath}", text: libraryResource(resourcePath)
+            }
 
             // ── 2. Determinar rama actual ──
             // En Jenkins puede haber detached HEAD; priorizamos variables del job.
@@ -105,25 +137,27 @@ def call(Map config = [:]) {
                 echo "🤖 Using MCP Agent mode"
 
                 sh """
-                    mkdir -p '${reportsDir}'
+                    set -eu
+                    mkdir -p ${shellQuote(reportsDir)}
                     python3 -m venv .ai_fixer/venv > /dev/null 2>&1
                     . .ai_fixer/venv/bin/activate > /dev/null 2>&1
                     pip install -r .ai_fixer/requirements-ai.txt > /dev/null 2>&1
 
-                    export LLM_MODEL='${resolvedModel}'
+                    export LLM_MODEL=${shellQuote(resolvedModel)}
                     export ${envKeyName}="\${LLM_API_KEY_VALUE}"
                     export GITHUB_PERSONAL_ACCESS_TOKEN="\${Github_AI_Auth}"
                     export Github_AI_Auth="\${Github_AI_Auth}"
-                    export SONARQUBE_URL='${sonarqubeUrl}'
+                    export SONARQUBE_URL=${shellQuote(sonarqubeUrl)}
                     export SONARQUBE_TOKEN="\${SONARQUBE_TOKEN}"
-                    export SONARQUBE_EFFECTIVE_PROJECT_KEY='${sonarqubeProjectKey}''
-                    ${testConfigFile ? "export AI_TEST_CONFIG_FILE='${testConfigFile}'" : ''}
+                    export SONARQUBE_EFFECTIVE_PROJECT_KEY=${shellQuote(sonarqubeProjectKey)}
+                    export AGENT_REPORTS_DIR=${shellQuote(reportsDir)}
+                    ${testConfigFile ? "export AI_TEST_CONFIG_FILE=${shellQuote(testConfigFile)}" : ''}
 
                     python3 .ai_fixer/mcp_agent.py \
-                        --repo '${repoSlug}' \
-                        --model '${resolvedModel}' \
-                        --source-branch '${sourceBranch}' \
-                        --workspace '${env.WORKSPACE}' \
+                        --repo ${shellQuote(repoSlug)} \
+                        --model ${shellQuote(resolvedModel)} \
+                        --source-branch ${shellQuote(sourceBranch)} \
+                        --workspace ${shellQuote(env.WORKSPACE ?: '')} \
                         --max-iterations ${maxIterations} \
                         ${dryRunFlag}
                 """

@@ -8,15 +8,23 @@ Reusable Jenkins Shared Library for the thesis workspace. This repository contai
 - `resources/scripts/mcp_agent.py`: compatibility wrapper for the MCP-based Python agent.
 - `resources/scripts/mcp_agent_pkg/`: internal MCP runtime package split by responsibility.
 - `resources/scripts/mcp_servers/test_runner_server.py`: local MCP server for configured test discovery, execution, and failure analysis.
+- visible documentation, tests, and CI for the shared-library layer itself.
 
 ## Repository structure
 
 ```text
 .
+|-- .github/
+|   `-- workflows/
+|       `-- ci.yml
+|-- CHANGELOG.md
 |-- README.md
 |-- docs/
 |   |-- fixwithai-contract.md
-|   `-- test-config-contract.md
+|   |-- mcp-agent-architecture.md
+|   |-- test-config-contract.md
+|   `-- versioning.md
+|-- pom.xml
 |-- resources/
 |   `-- scripts/
 |       |-- mcp_agent.py
@@ -33,6 +41,14 @@ Reusable Jenkins Shared Library for the thesis workspace. This repository contai
 |       |-- requirements-ai.txt
 |       `-- mcp_servers/
 |           `-- test_runner_server.py
+`-- tests/
+    |-- groovy/
+    |   `-- FixWithAIStepTest.groovy
+    `-- python/
+        |-- conftest.py
+        |-- test_agent_loop.py
+        |-- test_artifacts.py
+        `-- test_test_runner_server.py
 ```
 
 ## Runtime model
@@ -49,6 +65,7 @@ The intended deployment model is:
 - [`FixWithAI` contract](docs/fixwithai-contract.md)
 - [`ai-tests-config.json` and `.ai-tests.json` contract](docs/test-config-contract.md)
 - [`MCP agent architecture`](docs/mcp-agent-architecture.md)
+- [`Versioning guidance`](docs/versioning.md)
 
 ## Credentials and environment
 
@@ -71,5 +88,23 @@ When the MCP agent runs through `FixWithAI(...)`, the runtime writes structured 
 
 - `agent_summary.json`
 - `validation_results.json`
+- `agent_trace.json`
+- `change_manifest.json`
+- `execution_policy_snapshot.json`
 
 These artifacts are meant to support debugging, reproducibility, and thesis evidence collection.
+
+## Testing and CI
+
+The shared library now has visible regression coverage for both its Python runtime and the Jenkins-step layer.
+
+Local commands:
+
+```bash
+pytest tests/python -q
+mvn -q test
+```
+
+CI:
+
+- `.github/workflows/ci.yml` runs the same Python and Groovy checks on pushes and pull requests.
