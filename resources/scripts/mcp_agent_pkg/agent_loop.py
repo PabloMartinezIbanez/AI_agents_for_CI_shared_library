@@ -62,6 +62,43 @@ Start by querying SonarQube for open issues in the project."""
         {"role": "user", "content": user_message},
     ]
 
+    test_gate = {
+        "seen": False,
+        "passed": False,
+        "summary": "Tests have not been run yet.",
+    }
+
+    protected_repo_tools = {"create_branch", "push_files", "create_pull_request"}
+
+    def _update_test_gate_from_run_results(result_text):
+        test_gate["seen"] = True
+        try:
+            payload = json.loads(result_text)
+        except json.JSONDecodeError:
+            test_gate["passed"] = False
+            test_gate["summary"] = "run_tests returned a non-JSON response."
+            return
+
+        results = payload.get("results") if isinstance(payload, dict) else None
+        if not isinstance(results, list) or not results:
+            test_gate["passed"] = False
+            test_gate["summary"] = "run_tests returned no suite results."
+            return
+
+        failed_suites = []
+        for suite in results:
+            if not isinstance(suite, dict) or not suite.get("passed", False):
+                suite_name = suite.get("name") if isinstance(suite, dict) else None
+                failed_suites.append(suite_name or "unknown")
+
+        if failed_suites:
+            test_gate["passed"] = False
+            test_gate["summary"] = f"Failing suites: {', '.join(failed_suites)}"
+            return
+
+        test_gate["passed"] = True
+        test_gate["summary"] = f"All {len(results)} configured suite(s) passed."
+
     for iteration in range(1, max_iterations + 1):
         log(f"\n{'─' * 50}")
         log(f"🔄 Iteration {iteration}/{max_iterations}")
@@ -145,6 +182,14 @@ Start by querying SonarQube for open issues in the project."""
                 )
                 return (tool_call, func_name, func_args, result_text, "dry_run")
 
+            if not dry_run and func_name in protected_repo_tools:
+                if not test_gate["seen"] or not test_gate["passed"]:
+                    result_text = (
+                        f"Error: Blocked {func_name}. Repository mutation requires successful run_tests "
+                        f"execution first. Current validation status: {test_gate['summary']}"
+                    )
+                    return (tool_call, func_name, func_args, result_text, "error")
+
             session = tool_to_session.get(func_name)
             if not session:
                 result_text = (
@@ -165,7 +210,9 @@ Start by querying SonarQube for open issues in the project."""
                 result_text = f"Error calling {func_name}: {e}"
                 return (tool_call, func_name, func_args, result_text, "error")
 
-        results = await asyncio.gather(*[_execute_one(tc, fn, fa) for tc, fn, fa in preprocessed])
+        results = []
+        for tc, fn, fa in preprocessed:
+            results.append(await _execute_one(tc, fn, fa))
 
         for tool_call, func_name, func_args, result_text, status in results:
             log(f"\n🔧 Tool call: {func_name}")
@@ -188,6 +235,11 @@ Start by querying SonarQube for open issues in the project."""
             else:
                 log_preview = result_text[:600] + ("..." if len(result_text) > 600 else "")
                 log(f"   ✅ Result ({len(result_text)} chars): {log_preview}")
+
+            if func_name == "run_tests" and status == "ok":
+                _update_test_gate_from_run_results(result_text)
+                gate_state = "OPEN" if test_gate["passed"] else "CLOSED"
+                log(f"   🧪 Test gate: {gate_state} ({test_gate['summary']})")
 
             messages.append(
                 {
