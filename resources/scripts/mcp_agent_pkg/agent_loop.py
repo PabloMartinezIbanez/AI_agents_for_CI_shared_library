@@ -69,6 +69,12 @@ Start by querying SonarQube for open issues in the project."""
     }
 
     protected_repo_tools = {"create_branch", "push_files", "create_pull_request"}
+    test_invalidating_tools = {
+        "edit_file",
+        "write_file",
+        "create_or_update_file",
+        "mcp_github_create_or_update_file",
+    }
 
     def _update_test_gate_from_run_results(result_text):
         test_gate["seen"] = True
@@ -240,6 +246,12 @@ Start by querying SonarQube for open issues in the project."""
                 _update_test_gate_from_run_results(result_text)
                 gate_state = "OPEN" if test_gate["passed"] else "CLOSED"
                 log(f"   🧪 Test gate: {gate_state} ({test_gate['summary']})")
+            elif func_name in test_invalidating_tools and status == "ok":
+                test_gate["passed"] = False
+                test_gate["summary"] = (
+                    "Code changed after last run_tests. Re-run tests to reopen the gate."
+                )
+                log(f"   🧪 Test gate: CLOSED ({test_gate['summary']})")
 
             messages.append(
                 {
