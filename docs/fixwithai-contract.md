@@ -84,3 +84,31 @@ The runtime writes these JSON artifacts into `reports_for_IA/` or the configured
 - The step always removes `.ai_fixer/` in `finally`.
 - SonarQube connectivity failures are surfaced by the runtime instead of being silently ignored here.
 - Credential binding happens only around the runtime execution block.
+
+## `DetectPreviousAIFix(...)` helper step
+
+The shared library also exposes `DetectPreviousAIFix(...)` to centralize PR loop-guard logic.
+
+Purpose:
+
+- Query closed PRs for the current source branch and detect merged remediation branches matching `ai-fix/{sourceBranch}-*`.
+- Return `true` when a prior AI remediation PR was already merged.
+- Return `false` otherwise (including fail-open scenarios such as API errors or malformed payloads).
+
+Supported inputs:
+
+- `repoSlug` (required): GitHub repository in `owner/repo` format.
+- `sourceBranch` (optional): branch to evaluate, defaults to `env.CHANGE_BRANCH`.
+- `reportsDir` (optional): output directory for API payload files, defaults to `env.AI_REPORTS_DIR` or `reports_for_IA`.
+- `githubTokenVar` (optional): env var name containing the GitHub token, defaults to `Github_AI_Auth`.
+- `perPage` (optional): number of closed PRs fetched from GitHub API, default `100`.
+
+Example usage in a Jenkinsfile:
+
+```groovy
+env.AI_ALREADY_APPLIED = DetectPreviousAIFix(
+	repoSlug: 'owner/repo',
+	reportsDir: env.AI_REPORTS_DIR,
+	sourceBranch: env.CHANGE_BRANCH
+) ? 'true' : 'false'
+```
