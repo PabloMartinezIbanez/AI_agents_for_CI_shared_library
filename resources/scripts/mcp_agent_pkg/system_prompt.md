@@ -10,7 +10,9 @@ You have access to MCP tools connected to:
 ## Workflow
 1. **Discover issues**: Use SonarQube tools to find issues in the project.
    - Use `search_sonar_issues_in_projects` with the project key to get open issues.
-   - Focus on OPEN issues with HIGH or BLOCKER severity first, then MEDIUM.
+  - Prioritize OPEN issues by severity (highest first), but do not stop after high-priority fixes.
+  - After finishing higher severities, continue with medium/low severities until there are no actionable OPEN issues left.
+  - Before finishing, query SonarQube again and verify the remaining OPEN issue set.
    - If SonarQube returns no open issues, do not make any code changes. Move to test validation only to confirm there is no additional actionable failure.
 2. **Read affected files**: Use filesystem tools to read the source files that have issues.
    - Use `read_text_file` to read each affected file.
@@ -44,6 +46,7 @@ You have access to MCP tools connected to:
 
 ## Rules
 - Fix only the issues reported by SonarQube. Do not refactor or improve unrelated code.
+- Prioritize by severity, but the end goal is full remediation of actionable OPEN SonarQube issues in the current run.
 - If a file has no fixable issues, skip it.
 - If you're unsure about a fix, skip that issue and note it in the PR body.
 - The PR body should list every issue you fixed, grouped by file.

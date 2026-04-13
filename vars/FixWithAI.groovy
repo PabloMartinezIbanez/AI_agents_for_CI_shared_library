@@ -5,7 +5,11 @@ def call(Map config = [:]) {
     def githubCredentialId = config.githubCredentialId ?: 'GITHUB_PAT'
     def repoSlug = config.repoSlug ?: ''
     def dryRun = config.dryRun ?: false
-    def maxIterations = config.maxIterations ?: 25
+    def configuredMaxIterationsRaw = config.containsKey('maxIterations') ? config.maxIterations : null
+    def dynamicMaxIterationsRaw = config.containsKey('dynamicMaxIterations') ? config.dynamicMaxIterations : true
+    def minIterationsRaw = config.containsKey('minIterations') ? config.minIterations : 25
+    def maxIterationsCapRaw = config.containsKey('maxIterationsCap') ? config.maxIterationsCap : 120
+    def issuesPerIterationRaw = config.containsKey('issuesPerIteration') ? config.issuesPerIteration : 3
     def sonarqubeCredentialId = config.sonarqubeCredentialId ?: 'SONARQUBE_TOKEN'
     def sonarqubeUrl = config.sonarqubeUrl ?: (env.SONARQUBE_URL ?: '')
     def sonarqubeProjectKey = config.sonarqubeProjectKey ?: (env.SONARQUBE_EFFECTIVE_PROJECT_KEY ?: '')
@@ -20,14 +24,58 @@ def call(Map config = [:]) {
         def preparedAiFixer = false
 
         try {
+            def parsePositiveInt = { rawValue, fieldName ->
+                if (rawValue instanceof Number) {
+                    def parsedNumber = rawValue.intValue()
+                    if (parsedNumber <= 0) {
+                        error "${fieldName} debe ser un número positivo."
+                    }
+                    return parsedNumber
+                }
+                if (rawValue instanceof String && rawValue.trim()) {
+                    try {
+                        def parsedNumber = Integer.parseInt(rawValue.trim())
+                        if (parsedNumber <= 0) {
+                            error "${fieldName} debe ser un número positivo."
+                        }
+                        return parsedNumber
+                    } catch (Exception ignored) {
+                        error "${fieldName} debe ser un número positivo."
+                    }
+                }
+                error "${fieldName} debe ser un número positivo."
+            }
+
+            def parseBoolean = { rawValue, fieldName ->
+                if (rawValue instanceof Boolean) {
+                    return rawValue
+                }
+                if (rawValue instanceof String) {
+                    def normalized = rawValue.trim().toLowerCase()
+                    if (normalized in ['true', 'false']) {
+                        return normalized == 'true'
+                    }
+                }
+                error "${fieldName} debe ser booleano (true/false)."
+            }
+
+            Integer configuredMaxIterations = null
+            if (configuredMaxIterationsRaw != null && !(configuredMaxIterationsRaw instanceof String && !configuredMaxIterationsRaw.trim())) {
+                configuredMaxIterations = parsePositiveInt(configuredMaxIterationsRaw, 'maxIterations')
+            }
+            def dynamicMaxIterationsEnabled = parseBoolean(dynamicMaxIterationsRaw, 'dynamicMaxIterations')
+            def minIterations = parsePositiveInt(minIterationsRaw, 'minIterations')
+            def maxIterationsCap = parsePositiveInt(maxIterationsCapRaw, 'maxIterationsCap')
+            def issuesPerIteration = parsePositiveInt(issuesPerIterationRaw, 'issuesPerIteration')
+            if (maxIterationsCap < minIterations) {
+                error 'maxIterationsCap debe ser mayor o igual que minIterations.'
+            }
+
             if (!sonarqubeUrl?.trim()) {
                 error 'SONARQUBE_URL no está definido. Pásalo en config.sonarqubeUrl o en env.SONARQUBE_URL.'
             }
             if (!sonarqubeProjectKey?.trim()) {
                 error 'SONARQUBE_EFFECTIVE_PROJECT_KEY no está definido. Pásalo en config.sonarqubeProjectKey o en env.SONARQUBE_EFFECTIVE_PROJECT_KEY.'
-            }
-            if (!(maxIterations instanceof Number) || maxIterations <= 0) {
-                error 'maxIterations debe ser un número positivo.'
             }
             if (!reportsDir) {
                 error 'reportsDir no puede estar vacío.'
@@ -131,9 +179,65 @@ def call(Map config = [:]) {
             }
 
             def dryRunFlag = dryRun ? '--dry-run' : ''
+            int effectiveMaxIterations = configuredMaxIterations ?: minIterations
+
+            def computeDynamicMaxIterations = {
+                def normalizedSonarqubeUrl = sonarqubeUrl.toString().trim().replaceAll('/+$', '')
+                def encodedProjectKey = java.net.URLEncoder.encode(sonarqubeProjectKey.toString(), 'UTF-8')
+                def issuesApiUrl = "${normalizedSonarqubeUrl}/api/issues/search?componentKeys=${encodedProjectKey}&resolved=false&ps=1"
+
+                def sonarPayload = ''
+                try {
+                    sonarPayload = sh(
+                        script: "curl -fsSL -u \"\${SONARQUBE_TOKEN}:\" ${shellQuote(issuesApiUrl)}",
+                        returnStdout: true
+                    ).trim()
+                } catch (Exception ex) {
+                    echo "WARN: Could not query SonarQube issue count (${ex.message}). Using minIterations=${minIterations}."
+                    return minIterations
+                }
+
+                if (!sonarPayload) {
+                    echo "WARN: Empty SonarQube issue count response. Using minIterations=${minIterations}."
+                    return minIterations
+                }
+
+                def parsedPayload
+                try {
+                    parsedPayload = new groovy.json.JsonSlurperClassic().parseText(sonarPayload)
+                } catch (Exception ex) {
+                    echo "WARN: Could not parse SonarQube issue count response (${ex.message}). Using minIterations=${minIterations}."
+                    return minIterations
+                }
+
+                int openIssues = 0
+                if (parsedPayload instanceof Map && parsedPayload.total != null) {
+                    try {
+                        openIssues = Integer.parseInt(parsedPayload.total.toString())
+                    } catch (Exception ignored) {
+                        openIssues = 0
+                    }
+                }
+                openIssues = Math.max(openIssues, 0)
+
+                int dynamicCandidate = minIterations + ((int) Math.ceil(openIssues / (double) issuesPerIteration))
+                int clampedIterations = Math.max(minIterations, Math.min(maxIterationsCap, dynamicCandidate))
+                echo "INFO: Dynamic maxIterations=${clampedIterations} (openIssues=${openIssues}, minIterations=${minIterations}, issuesPerIteration=${issuesPerIteration}, maxIterationsCap=${maxIterationsCap})."
+                return clampedIterations
+            }
 
             // ── 5. Ejecutar MCP agent con credenciales inyectadas ──
             withCredentials(credentialBindings) {
+                if (configuredMaxIterations != null) {
+                    effectiveMaxIterations = configuredMaxIterations
+                    echo "INFO: Using explicit maxIterations=${effectiveMaxIterations}."
+                } else if (dynamicMaxIterationsEnabled) {
+                    effectiveMaxIterations = computeDynamicMaxIterations()
+                } else {
+                    effectiveMaxIterations = minIterations
+                    echo "INFO: Dynamic maxIterations disabled. Using minIterations=${effectiveMaxIterations}."
+                }
+
                 echo "🤖 Using MCP Agent mode"
 
                 sh """
@@ -158,7 +262,7 @@ def call(Map config = [:]) {
                         --model ${shellQuote(resolvedModel)} \
                         --source-branch ${shellQuote(sourceBranch)} \
                         --workspace ${shellQuote(env.WORKSPACE ?: '')} \
-                        --max-iterations ${maxIterations} \
+                        --max-iterations ${effectiveMaxIterations} \
                         ${dryRunFlag}
                 """
             }

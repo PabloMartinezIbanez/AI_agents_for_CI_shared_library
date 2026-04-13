@@ -1,6 +1,7 @@
 import groovy.lang.GroovyShell
 import org.junit.jupiter.api.Test
 
+import static org.junit.jupiter.api.Assertions.assertFalse
 import static org.junit.jupiter.api.Assertions.assertThrows
 import static org.junit.jupiter.api.Assertions.assertTrue
 
@@ -74,6 +75,35 @@ class FixWithAIStepTest {
         assertTrue(command.contains("export SONARQUBE_URL='http://host/'\"'\"'sq'"))
         assertTrue(command.contains("export SONARQUBE_EFFECTIVE_PROJECT_KEY='demo'\"'\"'key'"))
     }
+
+    @Test
+    void "computes max iterations dynamically from SonarQube issue count"() {
+        def harness = new FixWithAIHarness()
+        harness.sonarIssueTotal = 120
+        def script = harness.load()
+
+        script.call(repoSlug: 'owner/repo')
+
+        def command = harness.shellCommands.find { it.contains('python3 .ai_fixer/mcp_agent.py') }
+        assertTrue(command.contains('--max-iterations 65'))
+        assertTrue(harness.shellCommands.any { it.contains('/api/issues/search?componentKeys=') })
+    }
+
+    @Test
+    void "uses explicit maxIterations and skips dynamic SonarQube sizing"() {
+        def harness = new FixWithAIHarness()
+        harness.sonarIssueTotal = 500
+        def script = harness.load()
+
+        script.call(
+            repoSlug: 'owner/repo',
+            maxIterations: 40
+        )
+
+        def command = harness.shellCommands.find { it.contains('python3 .ai_fixer/mcp_agent.py') }
+        assertTrue(command.contains('--max-iterations 40'))
+        assertFalse(harness.shellCommands.any { it.contains('/api/issues/search?componentKeys=') })
+    }
 }
 
 class FixWithAIHarness {
@@ -87,6 +117,7 @@ class FixWithAIHarness {
     List<String> shellCommands = []
     List<String> writtenFiles = []
     Set<String> existingFiles = ['ai-tests-config.json'] as Set
+    int sonarIssueTotal = 0
 
     def load() {
         def scriptFile = new File('vars/FixWithAI.groovy')
@@ -106,10 +137,17 @@ class FixWithAIHarness {
         script.metaClass.withCredentials = { List bindings, Closure body -> body.call() }
         script.metaClass.sh = { Object args ->
             if (args instanceof Map) {
+                def scriptText = args.script?.toString() ?: ''
+                shellCommands << scriptText
                 if (args.returnStdout) {
+                    if (scriptText.contains('/api/issues/search?componentKeys=')) {
+                        return "{\"total\": ${sonarIssueTotal}}"
+                    }
+                    if (scriptText.contains('git remote get-url origin')) {
+                        return 'https://github.com/owner/repo.git'
+                    }
                     return 'feature/demo'
                 }
-                shellCommands << args.script.toString()
                 return 0
             }
             shellCommands << args.toString()

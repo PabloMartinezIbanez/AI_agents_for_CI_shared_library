@@ -11,7 +11,11 @@ It prepares the local MCP runtime, validates the required Jenkins context, injec
 - `githubCredentialId`: Jenkins string credential for the GitHub PAT.
 - `repoSlug`: GitHub repository in `owner/repo` format. If omitted, the step tries to infer it from `origin`.
 - `dryRun`: when `true`, the agent stays read-only from the repository-mutation point of view.
-- `maxIterations`: max reasoning iterations for the agent loop.
+- `maxIterations`: optional explicit override for agent loop iterations. When set, it takes precedence over dynamic sizing.
+- `dynamicMaxIterations`: enable/disable automatic sizing based on SonarQube open issues. Default: `true`.
+- `minIterations`: lower bound used by dynamic sizing. Default: `25`.
+- `maxIterationsCap`: upper bound used by dynamic sizing. Default: `120`.
+- `issuesPerIteration`: sizing ratio for dynamic mode (higher value -> fewer iterations). Default: `3`.
 - `sonarqubeCredentialId`: Jenkins string credential for the SonarQube token.
 - `sonarqubeUrl`: explicit SonarQube URL. Falls back to `env.SONARQUBE_URL`.
 - `sonarqubeProjectKey`: explicit effective project key. Falls back to `env.SONARQUBE_EFFECTIVE_PROJECT_KEY`.
@@ -24,12 +28,23 @@ The step fails fast when:
 
 - `SONARQUBE_URL` is missing.
 - `SONARQUBE_EFFECTIVE_PROJECT_KEY` is missing.
-- `maxIterations` is not a positive number.
+- `maxIterations`, `minIterations`, `maxIterationsCap`, or `issuesPerIteration` are invalid (non-positive).
+- `dynamicMaxIterations` is not boolean.
+- `maxIterationsCap` is lower than `minIterations`.
 - `reportsDir` is empty or contains `..`.
 - `repoSlug`, when provided, does not match `owner/repo`.
 - `testConfigFile`, when provided, does not exist in the workspace.
 
 The step also skips execution entirely when the source branch starts with `ai-fix/` in order to avoid self-triggering loops.
+
+## Dynamic max-iteration sizing
+
+When `maxIterations` is not provided and `dynamicMaxIterations` is `true`, the step queries SonarQube issue totals via `/api/issues/search` and computes:
+
+- `dynamicCandidate = minIterations + ceil(openIssues / issuesPerIteration)`
+- `effectiveMaxIterations = clamp(dynamicCandidate, minIterations, maxIterationsCap)`
+
+If SonarQube cannot be queried (token/API/parsing error), the step falls back to `minIterations`.
 
 ## Runtime extraction
 

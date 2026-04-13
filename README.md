@@ -5,6 +5,7 @@ Reusable Jenkins Shared Library for the thesis workspace. This repository contai
 ## What this repository provides
 
 - `FixWithAI(...)`: remediation step that prepares the MCP runtime, injects credentials, enforces preflight checks, and launches the agent.
+- `FixWithAI(...)` supports dynamic max-iteration sizing from SonarQube open issue counts (with explicit override support).
 - `DetectPreviousAIFix(...)`: helper step that checks whether a source PR branch already has a merged `ai-fix/*` remediation PR and returns a boolean guard value.
 - `resources/scripts/mcp_agent.py`: compatibility wrapper for the MCP-based Python agent.
 - `resources/scripts/mcp_agent_pkg/`: internal MCP runtime package split by responsibility.
