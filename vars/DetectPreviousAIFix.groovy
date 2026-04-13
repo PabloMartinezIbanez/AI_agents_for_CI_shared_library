@@ -48,6 +48,9 @@ def call(Map config = [:]) {
             echo 'WARN: CHANGE_BRANCH is not available. DetectPreviousAIFix returns false.'
             return false
         }
+        if (!(githubTokenVar ==~ /[A-Za-z_][A-Za-z0-9_]*/)) {
+            error "githubTokenVar '${githubTokenVar}' no es un nombre de variable de entorno valido."
+        }
 
         def githubToken = env."${githubTokenVar}"?.toString()?.trim()
         if (!githubToken) {
@@ -65,13 +68,19 @@ def call(Map config = [:]) {
         withEnv([
             "AI_FIX_API_URL=${apiUrl}",
             "AI_FIX_OUTPUT_PATH=${outputPath}",
-            "AI_FIX_GITHUB_TOKEN=${githubToken}"
+            "AI_FIX_GITHUB_TOKEN_VAR=${githubTokenVar}"
         ]) {
             apiStatus = sh(
                 script: '''
+                    AI_FIX_TOKEN="$(printenv "$AI_FIX_GITHUB_TOKEN_VAR")"
+                    if [ -z "$AI_FIX_TOKEN" ]; then
+                        echo "WARN: GitHub token variable '$AI_FIX_GITHUB_TOKEN_VAR' is empty in shell context." >&2
+                        exit 2
+                    fi
+
                     curl -fsSL \
                       -H "Accept: application/vnd.github+json" \
-                      -H "Authorization: Bearer $AI_FIX_GITHUB_TOKEN" \
+                      -H "Authorization: Bearer $AI_FIX_TOKEN" \
                       "$AI_FIX_API_URL" \
                       -o "$AI_FIX_OUTPUT_PATH"
                 ''',

@@ -25,6 +25,8 @@ class DetectPreviousAIFixStepTest {
 
         assertTrue(result)
         assertTrue(harness.shellCommands.any { it.contains('curl -fsSL') })
+        assertTrue(harness.withEnvCalls.any { values -> values.any { it == 'AI_FIX_GITHUB_TOKEN_VAR=Github_AI_Auth' } })
+        assertFalse(harness.withEnvCalls.any { values -> values.any { it.contains('token-value') } })
     }
 
         @Test
@@ -77,6 +79,7 @@ class DetectPreviousAIFixHarness {
         Github_AI_Auth: 'token-value',
     ]
     List<String> shellCommands = []
+    List<List<String>> withEnvCalls = []
     int apiStatus = 0
     String readFilePayload = '[]'
 
@@ -88,7 +91,10 @@ class DetectPreviousAIFixHarness {
         script.metaClass.script = { Closure body -> body.call() }
         script.metaClass.error = { String message -> throw new RuntimeException(message) }
         script.metaClass.echo = { String message -> null }
-        script.metaClass.withEnv = { List values, Closure body -> body.call() }
+        script.metaClass.withEnv = { List values, Closure body ->
+            withEnvCalls << values.collect { it?.toString() }
+            body.call()
+        }
         script.metaClass.readFile = { String path -> readFilePayload }
         script.metaClass.sh = { Object args ->
             if (args instanceof Map) {
