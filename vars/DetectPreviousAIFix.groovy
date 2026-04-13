@@ -4,12 +4,37 @@ def call(Map config = [:]) {
     def sourceBranch = (config.sourceBranch ?: (env.CHANGE_BRANCH ?: '')).toString().trim()
     def githubTokenVar = (config.githubTokenVar ?: 'Github_AI_Auth').toString().trim()
     def perPage = (config.perPage ?: 100) as int
+    def cooldownMinutesRaw = config.containsKey('cooldownMinutes') ? config.cooldownMinutes : 5
     def shellQuote = { value ->
         def normalized = (value ?: '').toString().replace("'", "'\"'\"'")
         return "'${normalized}'"
     }
 
     script {
+        def parsePositiveInt = { rawValue, fieldName ->
+            if (rawValue instanceof Number) {
+                def parsedNumber = rawValue.intValue()
+                if (parsedNumber <= 0) {
+                    error "${fieldName} debe ser un número positivo."
+                }
+                return parsedNumber
+            }
+            if (rawValue instanceof String && rawValue.trim()) {
+                try {
+                    def parsedNumber = Integer.parseInt(rawValue.trim())
+                    if (parsedNumber <= 0) {
+                        error "${fieldName} debe ser un número positivo."
+                    }
+                    return parsedNumber
+                } catch (Exception ignored) {
+                    error "${fieldName} debe ser un número positivo."
+                }
+            }
+            error "${fieldName} debe ser un número positivo."
+        }
+
+        def cooldownMinutes = parsePositiveInt(cooldownMinutesRaw, 'cooldownMinutes')
+
         if (!repoSlug || !(repoSlug ==~ /[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/)) {
             error "repoSlug '${repoSlug}' no tiene el formato esperado owner/repo."
         }
@@ -82,12 +107,39 @@ def call(Map config = [:]) {
             pr.head.ref.startsWith(aiPrefix)
         }
 
-        if (mergedAiPullRequests) {
-            echo "INFO: Detected ${mergedAiPullRequests.size()} merged AI fix PR(s) for '${sourceBranch}'."
+        if (!mergedAiPullRequests) {
+            echo "INFO: No merged AI fix PR detected for '${sourceBranch}'."
+            return false
+        }
+
+        def nowInstant = java.time.Instant.now()
+        def cooldownSeconds = cooldownMinutes * 60L
+        def hasRecentMergedAiFix = mergedAiPullRequests.any { pr ->
+            def mergedAtRaw = (pr.merged_at ?: pr.closed_at)?.toString()?.trim()
+            if (!mergedAtRaw) {
+                return false
+            }
+
+            try {
+                def mergedAtInstant = java.time.Instant.parse(mergedAtRaw)
+                def ageSeconds = java.time.Duration.between(mergedAtInstant, nowInstant).seconds
+
+                // If clocks are slightly skewed and age is negative, treat as recent to avoid loops.
+                if (ageSeconds < 0) {
+                    return true
+                }
+                return ageSeconds <= cooldownSeconds
+            } catch (Exception ignored) {
+                return false
+            }
+        }
+
+        if (hasRecentMergedAiFix) {
+            echo "INFO: Detected merged AI fix PR within the last ${cooldownMinutes} minute(s) for '${sourceBranch}'."
             return true
         }
 
-        echo "INFO: No merged AI fix PR detected for '${sourceBranch}'."
+        echo "INFO: Merged AI fix PR(s) found for '${sourceBranch}', but all are older than ${cooldownMinutes} minute(s)."
         return false
     }
 }

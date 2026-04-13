@@ -8,16 +8,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue
 class DetectPreviousAIFixStepTest {
 
     @Test
-    void "returns true when merged ai-fix PR exists for source branch"() {
+        void "returns true when merged ai-fix PR exists within cooldown window"() {
         def harness = new DetectPreviousAIFixHarness()
-        harness.readFilePayload = '''
+                def recentMergedAt = java.time.Instant.now().minusSeconds(120).toString()
+                harness.readFilePayload = """
 [
   {
-    "merged_at": "2026-04-13T10:00:00Z",
+        "merged_at": "${recentMergedAt}",
     "head": { "ref": "ai-fix/feature-login-20260413-100000" }
   }
 ]
-'''
+"""
         def script = harness.load()
 
         def result = script.call(repoSlug: 'owner/repo', sourceBranch: 'feature-login')
@@ -25,6 +26,25 @@ class DetectPreviousAIFixStepTest {
         assertTrue(result)
         assertTrue(harness.shellCommands.any { it.contains('curl -fsSL') })
     }
+
+        @Test
+        void "returns false when merged ai-fix PR is older than cooldown window"() {
+                def harness = new DetectPreviousAIFixHarness()
+                def staleMergedAt = java.time.Instant.now().minusSeconds(3600).toString()
+                harness.readFilePayload = """
+[
+    {
+        "merged_at": "${staleMergedAt}",
+        "head": { "ref": "ai-fix/feature-login-20260413-100000" }
+    }
+]
+"""
+                def script = harness.load()
+
+                def result = script.call(repoSlug: 'owner/repo', sourceBranch: 'feature-login')
+
+                assertFalse(result)
+        }
 
     @Test
     void "returns false when github api request fails"() {

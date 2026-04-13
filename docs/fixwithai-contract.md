@@ -107,7 +107,7 @@ The shared library also exposes `DetectPreviousAIFix(...)` to centralize PR loop
 Purpose:
 
 - Query closed PRs for the current source branch and detect merged remediation branches matching `ai-fix/{sourceBranch}-*`.
-- Return `true` when a prior AI remediation PR was already merged.
+- Return `true` only when a matching merged AI remediation PR is recent (inside the cooldown window).
 - Return `false` otherwise (including fail-open scenarios such as API errors or malformed payloads).
 
 Supported inputs:
@@ -117,6 +117,14 @@ Supported inputs:
 - `reportsDir` (optional): output directory for API payload files, defaults to `env.AI_REPORTS_DIR` or `reports_for_IA`.
 - `githubTokenVar` (optional): env var name containing the GitHub token, defaults to `Github_AI_Auth`.
 - `perPage` (optional): number of closed PRs fetched from GitHub API, default `100`.
+- `cooldownMinutes` (optional): minutes to block new AI runs after a merged `ai-fix/*` PR. Default `5`.
+
+Timestamp behavior:
+
+- GitHub closed PR payload includes `merged_at` and `closed_at` timestamps.
+- `DetectPreviousAIFix(...)` uses the merge timestamp to compute PR age.
+- If a matching merged AI PR is newer than `cooldownMinutes`, it returns `true` (skip IA fix).
+- If all matching merged AI PRs are older than `cooldownMinutes`, it returns `false` (allow IA fix again).
 
 Example usage in a Jenkinsfile:
 
