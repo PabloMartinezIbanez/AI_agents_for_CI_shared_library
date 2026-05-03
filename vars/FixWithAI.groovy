@@ -167,6 +167,7 @@ def call(Map config = [:]) {
             // Determinar la variable de entorno correcta para el proveedor del LLM
             def envKeyName = 'OPENAI_API_KEY'
             def resolvedModel = llmModel
+            def llmBaseUrl = ''
             if (llmModel.startsWith('claude') || llmModel.startsWith('anthropic/')) {
                 envKeyName = 'ANTHROPIC_API_KEY'
             } else if (llmModel.startsWith('gemini/') || llmModel.startsWith('google/')) {
@@ -176,6 +177,10 @@ def call(Map config = [:]) {
                 resolvedModel = "gemini/${llmModel}"
             } else if (llmModel.startsWith('ollama/') || llmModel.startsWith('ollama_chat/')) {
                 envKeyName = 'OLLAMA_API_KEY'
+            } else if (llmModel.startsWith('nvidia/')) {
+                envKeyName = 'OPENAI_API_KEY'
+                resolvedModel = "openai/${llmModel.replaceFirst('nvidia/', '')}"
+                llmBaseUrl = 'https://integrate.api.nvidia.com/v1'
             }
 
             def dryRunFlag = dryRun ? '--dry-run' : ''
@@ -249,6 +254,7 @@ def call(Map config = [:]) {
 
                     export LLM_MODEL=${shellQuote(resolvedModel)}
                     export ${envKeyName}="\${LLM_API_KEY_VALUE}"
+                    ${llmBaseUrl ? "export OPENAI_API_BASE=${shellQuote(llmBaseUrl)}" : ''}
                     export GITHUB_PERSONAL_ACCESS_TOKEN="\${Github_AI_Auth}"
                     export Github_AI_Auth="\${Github_AI_Auth}"
                     export SONARQUBE_URL=${shellQuote(sonarqubeUrl)}
