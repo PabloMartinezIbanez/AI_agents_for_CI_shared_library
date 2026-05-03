@@ -16,18 +16,20 @@ async def run_agent_loop(
     tool_to_session,
     openai_tools,
     model,
-    base_url,
-    extra_body,
     system_prompt,
     repo_slug,
     source_branch,
     sonarqube_project_key,
+    base_url=None,
+    extra_body=None,
     max_iterations=25,
     dry_run=False,
 ):
     """Run the agent reasoning loop: LLM decides -> call tool -> observe -> repeat."""
 
+    os.environ.setdefault("LITELLM_TELEMETRY", "False")
     import litellm
+    litellm.suppress_debug_info = True
 
     os.environ.setdefault("LITELLM_REQUEST_TIMEOUT", "300")
 

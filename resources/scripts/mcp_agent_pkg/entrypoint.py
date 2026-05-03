@@ -141,7 +141,10 @@ async def async_main(
                 max_iterations=args.max_iterations,
                 dry_run=args.dry_run,
             )
-            status = "completed"
+            if messages and messages[-1].get("role") == "tool":
+                status = "max_iterations_reached"
+            else:
+                status = "completed"
         except Exception as exc:
             error_message = str(exc)
             raise
@@ -159,7 +162,10 @@ async def async_main(
                 error_message=error_message,
             )
 
-        log(f"\n✅ Agent completed. Total messages exchanged: {len(messages)}")
+        if status == "max_iterations_reached":
+            log(f"\n⚠️  Agent stopped at max iterations. Total messages exchanged: {len(messages)}")
+        else:
+            log(f"\n✅ Agent completed. Total messages exchanged: {len(messages)}")
 
         if sonarqube_container:
             log(f"\n🛑 Stopping SonarQube Docker container: {sonarqube_container}")
