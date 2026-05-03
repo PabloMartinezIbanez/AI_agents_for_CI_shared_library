@@ -16,6 +16,7 @@ async def run_agent_loop(
     tool_to_session,
     openai_tools,
     model,
+    base_url,
     system_prompt,
     repo_slug,
     source_branch,
@@ -120,6 +121,7 @@ Start by querying SonarQube for open issues in the project."""
                 timeout=300,
                 num_retries=2,
                 user="jenkins-pipeline-agent",
+                base_url=base_url if base_url else None
             )
         except Exception as e:
             log(f"❌ LLM call failed after retries: {e}")

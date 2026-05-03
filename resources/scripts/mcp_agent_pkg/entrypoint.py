@@ -40,9 +40,7 @@ async def async_main(
     workspace = os.path.abspath(args.workspace)
     reports_dir = resolve_reports_dir(workspace)
     model = args.model or resolve_env_value("LLM_MODEL") or "gemini/gemini-2.0-flash"
-    _known_prefixes = ("openai/", "anthropic/", "gemini/", "google/", "ollama/", "ollama_chat/", "huggingface/", "cohere/", "mistral/", "groq/")
-    if resolve_env_value("OPENAI_API_BASE") and not any(model.startswith(p) for p in _known_prefixes):
-        model = f"openai/{model}"
+    base_url = resolve_env_value("AI_BASE_URL") or None
     github_token = resolve_env_value("GITHUB_PERSONAL_ACCESS_TOKEN", "Github_AI_Auth")
     sonarqube_url = resolve_env_value("SONARQUBE_URL")
     sonarqube_token = resolve_env_value("SONARQUBE_TOKEN")
@@ -54,6 +52,8 @@ async def async_main(
     log("=" * 60)
     log("🤖  MCP AI Agent")
     log(f"   Model:     {model}")
+    if base_url:
+        log(f"   Base URL:  {base_url}")
     log(f"   Repo:      {args.repo}")
     log(f"   Branch:    {args.source_branch}")
     log(f"   Workspace: {workspace}")
@@ -131,6 +131,7 @@ async def async_main(
                 tool_to_session=tool_to_session,
                 openai_tools=openai_tools,
                 model=model,
+                base_url=base_url,
                 system_prompt=system_prompt,
                 repo_slug=args.repo,
                 source_branch=args.source_branch,
