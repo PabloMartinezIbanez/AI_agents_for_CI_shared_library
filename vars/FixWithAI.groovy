@@ -7,9 +7,10 @@ def call(Map config = [:]) {
     def dryRun = config.dryRun ?: false
     def configuredMaxIterationsRaw = config.containsKey('maxIterations') ? config.maxIterations : null
     def dynamicMaxIterationsRaw = config.containsKey('dynamicMaxIterations') ? config.dynamicMaxIterations : true
-    def minIterationsRaw = config.containsKey('minIterations') ? config.minIterations : 25
-    def maxIterationsCapRaw = config.containsKey('maxIterationsCap') ? config.maxIterationsCap : 120
-    def issuesPerIterationRaw = config.containsKey('issuesPerIteration') ? config.issuesPerIteration : 3
+    def minIterationsRaw = config.containsKey('minIterations') ? config.minIterations : 30
+    def maxIterationsCapRaw = config.containsKey('maxIterationsCap') ? config.maxIterationsCap : 200
+    def issuesPerIterationRaw = config.containsKey('issuesPerIteration') ? config.issuesPerIteration : 1
+    def iterationsPerIssueRaw = config.containsKey('iterationsPerIssue') ? config.iterationsPerIssue : 4
     def sonarqubeCredentialId = config.sonarqubeCredentialId ?: 'SONARQUBE_TOKEN'
     def sonarqubeUrl = config.sonarqubeUrl ?: (env.SONARQUBE_URL ?: '')
     def sonarqubeProjectKey = config.sonarqubeProjectKey ?: (env.SONARQUBE_EFFECTIVE_PROJECT_KEY ?: '')
@@ -67,6 +68,7 @@ def call(Map config = [:]) {
             def minIterations = parsePositiveInt(minIterationsRaw, 'minIterations')
             def maxIterationsCap = parsePositiveInt(maxIterationsCapRaw, 'maxIterationsCap')
             def issuesPerIteration = parsePositiveInt(issuesPerIterationRaw, 'issuesPerIteration')
+            def iterationsPerIssue = parsePositiveInt(iterationsPerIssueRaw, 'iterationsPerIssue')
             if (maxIterationsCap < minIterations) {
                 error 'maxIterationsCap debe ser mayor o igual que minIterations.'
             }
@@ -229,9 +231,9 @@ def call(Map config = [:]) {
                 }
                 openIssues = Math.max(openIssues, 0)
 
-                int dynamicCandidate = minIterations + ((int) Math.ceil(openIssues / (double) issuesPerIteration))
+                int dynamicCandidate = minIterations + ((int) Math.ceil(openIssues / (double) issuesPerIteration)) * iterationsPerIssue
                 int clampedIterations = Math.max(minIterations, Math.min(maxIterationsCap, dynamicCandidate))
-                echo "INFO: Dynamic maxIterations=${clampedIterations} (openIssues=${openIssues}, minIterations=${minIterations}, issuesPerIteration=${issuesPerIteration}, maxIterationsCap=${maxIterationsCap})."
+                echo "INFO: Dynamic maxIterations=${clampedIterations} (openIssues=${openIssues}, minIterations=${minIterations}, issuesPerIteration=${issuesPerIteration}, iterationsPerIssue=${iterationsPerIssue}, maxIterationsCap=${maxIterationsCap})."
                 return clampedIterations
             }
 
