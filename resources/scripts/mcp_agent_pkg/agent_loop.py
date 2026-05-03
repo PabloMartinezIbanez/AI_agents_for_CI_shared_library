@@ -114,7 +114,7 @@ Start by querying SonarQube for open issues in the project."""
         log(f"{'─' * 50}")
 
         try:
-            print(f'extra_body: {extra_body}')
+            log(f'extra_body: {extra_body}')
             response = litellm.completion(
                 model=model,
                 messages=messages,
