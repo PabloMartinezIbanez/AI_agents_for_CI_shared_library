@@ -17,13 +17,13 @@ async def run_agent_loop(
     openai_tools,
     model,
     base_url,
+    extra_body,
     system_prompt,
     repo_slug,
     source_branch,
     sonarqube_project_key,
     max_iterations=25,
     dry_run=False,
-    extra_body=None,
 ):
     """Run the agent reasoning loop: LLM decides -> call tool -> observe -> repeat."""
 
