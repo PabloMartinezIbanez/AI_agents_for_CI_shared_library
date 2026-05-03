@@ -8,11 +8,21 @@ Esto también sirve para demostrar **lo sencillo que es cambiar de proveedor LLM
 
 ---
 
-## Conclusión tras la prueba
+## Conclusión tras las pruebas
 
-**DeepSeek-V4-Pro a través de NVIDIA NIM funciona correctamente**, pero es significativamente más lento que Gemini para el mismo trabajo: cada iteración del agente tarda considerablemente más, lo que hace que una ejecución completa se extienda mucho más de lo aceptable en un pipeline de CI.
+Se probaron dos modelos de NVIDIA NIM:
 
-Por este motivo se ha decidido **volver a usar la API de Gemini en su plan de pago**, aceptando el coste a cambio de la velocidad necesaria para que el agente sea práctico.
+### DeepSeek-V4-Pro
+
+**Funciona correctamente**, pero es significativamente más lento que Gemini: cada iteración del agente tarda considerablemente más, lo que hace que una ejecución completa se extienda mucho más de lo aceptable en un pipeline de CI.
+
+### Kimi-K2-Instruct
+
+Probado como alternativa a DeepSeek. El rendimiento fue **notablemente mejor** — velocidad y calidad de respuesta mucho más cercanas a Gemini. Sin embargo, la cuenta gratuita de NVIDIA NIM impone un límite de **40 requests por minuto**, y el agente supera ese límite durante una ejecución completa, lo que impide que termine de corregir todos los issues.
+
+### Decisión final
+
+Ninguno de los dos modelos gratuitos resulta viable para uso en CI: DeepSeek es demasiado lento y Kimi-K2 choca con el rate limit. Se ha decidido **pagar por la API de Gemini**, aceptando el coste a cambio de velocidad y sin restricciones de uso.
 
 El soporte para NVIDIA queda implementado en el código por si se quisiera usar en el futuro.
 
