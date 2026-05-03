@@ -177,9 +177,9 @@ def call(Map config = [:]) {
                 resolvedModel = "gemini/${llmModel}"
             } else if (llmModel.startsWith('ollama/') || llmModel.startsWith('ollama_chat/')) {
                 envKeyName = 'OLLAMA_API_KEY'
-            } else if (llmModel.startsWith('nvidia/')) {
+            } else if (llmModel.startsWith('nvidia/') || llmModel.startsWith('deepseek')) {
                 envKeyName = 'OPENAI_API_KEY'
-                resolvedModel = "openai/${llmModel.replaceFirst('nvidia/', '')}"
+                resolvedModel = "deepseek-ai/${llmModel}"
                 llmBaseUrl = 'https://integrate.api.nvidia.com/v1'
             }
 
