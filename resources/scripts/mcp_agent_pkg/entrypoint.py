@@ -41,7 +41,7 @@ async def async_main(
     reports_dir = resolve_reports_dir(workspace)
     model = args.model or resolve_env_value("LLM_MODEL") or "gemini/gemini-2.0-flash"
     base_url = resolve_env_value("AI_BASE_URL") or None
-    extra_body = {"chat_template_kwargs": {"thinking": False}} if base_url and "nvidia" in base_url else None
+    extra_body = {"thinking": {"type": "disabled"}} if base_url and "nvidia" in base_url else None
     github_token = resolve_env_value("GITHUB_PERSONAL_ACCESS_TOKEN", "Github_AI_Auth")
     sonarqube_url = resolve_env_value("SONARQUBE_URL")
     sonarqube_token = resolve_env_value("SONARQUBE_TOKEN")
