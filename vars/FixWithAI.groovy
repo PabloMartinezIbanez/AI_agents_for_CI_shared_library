@@ -181,6 +181,10 @@ def call(Map config = [:]) {
                 envKeyName = 'OPENAI_API_KEY'
                 resolvedModel = "deepseek-ai/${llmModel}"
                 base_url = 'https://integrate.api.nvidia.com/v1'
+            } else if (llmModel.startsWith('kimi')) {
+                envKeyName = 'OPENAI_API_KEY'
+                resolvedModel = "moonshotai/${llmModel}"
+                base_url = 'https://integrate.api.nvidia.com/v1'
             }
 
             def dryRunFlag = dryRun ? '--dry-run' : ''

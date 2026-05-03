@@ -2,9 +2,19 @@
 
 ## Por qué se añade este soporte
 
-La cuenta de prueba gratuita de Google Gemini ha expirado. Como alternativa sin coste inmediato, NVIDIA ofrece créditos de API a través de su plataforma NIM (NVIDIA Inference Microservices), que expone modelos — entre ellos `deepseek-ai/deepseek-v4-pro` — mediante una API compatible con OpenAI.
+La cuenta de prueba gratuita de Google Gemini expiró. Como alternativa sin coste inmediato, NVIDIA ofrece créditos de API a través de su plataforma NIM (NVIDIA Inference Microservices), que expone modelos — entre ellos `deepseek-ai/deepseek-v4-pro` — mediante una API compatible con OpenAI.
 
-Esto también es una buena oportunidad para documentar **lo sencillo que es cambiar de proveedor LLM** en esta librería gracias a su arquitectura en capas.
+Esto también sirve para demostrar **lo sencillo que es cambiar de proveedor LLM** en esta librería gracias a su arquitectura en capas.
+
+---
+
+## Conclusión tras la prueba
+
+**DeepSeek-V4-Pro a través de NVIDIA NIM funciona correctamente**, pero es significativamente más lento que Gemini para el mismo trabajo: cada iteración del agente tarda considerablemente más, lo que hace que una ejecución completa se extienda mucho más de lo aceptable en un pipeline de CI.
+
+Por este motivo se ha decidido **volver a usar la API de Gemini en su plan de pago**, aceptando el coste a cambio de la velocidad necesaria para que el agente sea práctico.
+
+El soporte para NVIDIA queda implementado en el código por si se quisiera usar en el futuro.
 
 ---
 
@@ -29,111 +39,71 @@ Para cambiar de modelo basta con dos variables de entorno:
 | `LLM_MODEL` | Qué modelo usar (en formato litellm, p.ej. `gemini/gemini-2.0-flash`) |
 | `<PROVEEDOR>_API_KEY` | Credencial para ese proveedor |
 
-El paso de Jenkins (`FixWithAI.groovy`) ya gestiona esto automáticamente: detecta el prefijo del modelo (`gemini/`, `anthropic/`, `ollama/`…) y exporta la variable de credencial correcta.
+El paso de Jenkins (`FixWithAI.groovy`) gestiona esto automáticamente: detecta el prefijo del modelo (`gemini/`, `anthropic/`, `nvidia/`…) y exporta la variable de credencial y la URL base correctas.
 
 ---
 
-## Qué hace falta para usar NVIDIA / DeepSeek
+## Cambios implementados para NVIDIA / DeepSeek
 
-### Cómo funciona litellm con endpoints OpenAI-compatibles
+### `FixWithAI.groovy`
 
-Para redirigir litellm a cualquier API compatible con OpenAI basta con:
-
-```
-LLM_MODEL     = openai/deepseek-ai/deepseek-v4-pro
-OPENAI_API_KEY = <nvidia-api-key>
-OPENAI_API_BASE = https://integrate.api.nvidia.com/v1
-```
-
-El prefijo `openai/` le dice a litellm que use el protocolo OpenAI; `OPENAI_API_BASE` sustituye la URL base por la de NVIDIA. **El código Python no necesita ningún cambio.**
-
----
-
-### Ejecución local (sin Jenkins)
-
-Si se lanza el agente directamente desde CLI, funciona sin tocar ningún fichero:
-
-```bash
-export LLM_MODEL="openai/deepseek-ai/deepseek-v4-pro"
-export OPENAI_API_KEY="<nvidia-api-key>"
-export OPENAI_API_BASE="https://integrate.api.nvidia.com/v1"
-
-python3 .ai_fixer/mcp_agent.py --repo <repo> --model openai/deepseek-ai/deepseek-v4-pro ...
-```
-
----
-
-### Ejecución vía Jenkins (`FixWithAI.groovy`) — cambios necesarios
-
-El Groovy es el único sitio que inyecta variables de entorno en el proceso Python. Actualmente **no exporta `OPENAI_API_BASE`**, por lo que litellm seguiría apuntando a `api.openai.com` aunque el modelo sea correcto.
-
-#### Cambio 1 — Añadir el parámetro `llmBaseUrl`
-
-En la sección de parámetros de `FixWithAI.groovy` (donde están `llmModel`, `llmCredentialId`, etc.) añadir:
-
-```groovy
-String llmBaseUrl = ''          // URL base del endpoint (vacío = proveedor por defecto)
-```
-
-#### Cambio 2 — Detectar el proveedor NVIDIA en la selección de credencial
-
-En el bloque que asigna `envKeyName` (líneas ~167-179), añadir un caso para NVIDIA:
+Se añadió una rama en el detector de proveedores. Cuando `llmModel` empieza por `nvidia/`, el Groovy:
+1. Mantiene `OPENAI_API_KEY` como nombre de variable de credencial (NVIDIA usa el mismo protocolo que OpenAI).
+2. Transforma el modelo a formato litellm: `nvidia/deepseek-ai/deepseek-v4-pro` → `openai/deepseek-ai/deepseek-v4-pro`.
+3. Exporta `AI_BASE_URL=https://integrate.api.nvidia.com/v1` automáticamente — sin que el Jenkinsfile tenga que especificarlo.
 
 ```groovy
 } else if (llmModel.startsWith('nvidia/')) {
-    envKeyName = 'OPENAI_API_KEY'     // NVIDIA usa el mismo nombre de variable
+    envKeyName = 'OPENAI_API_KEY'
     resolvedModel = "openai/${llmModel.replaceFirst('nvidia/', '')}"
+    llmBaseUrl = 'https://integrate.api.nvidia.com/v1'
 }
 ```
 
-O, si se prefiere pasar el modelo ya con el prefijo `openai/deepseek-ai/...` directamente, no hace falta esta rama — el caso por defecto (`OPENAI_API_KEY`) ya es correcto.
+### `entrypoint.py`
 
-#### Cambio 3 — Exportar `OPENAI_API_BASE` si se ha proporcionado
+- Lee `AI_BASE_URL` del entorno y lo pasa a `run_agent_loop`.
+- Si `AI_BASE_URL` está configurada y el modelo no tiene prefijo de proveedor conocido, añade `openai/` automáticamente (cubre el caso de pasar el modelo sin prefijo desde Jenkins o CLI).
+- Si la URL contiene `"nvidia"`, activa `extra_body={"thinking": {"type": "disabled"}}` para desactivar la cadena de razonamiento interna de DeepSeek (ver sección siguiente).
+- Incluye `Base URL` en el log de arranque cuando está configurada.
 
-En el bloque `sh """..."""` que lanza el agente Python (líneas ~250-267), añadir después del export del modelo:
+### `agent_loop.py`
 
-```groovy
-${llmBaseUrl ? "export OPENAI_API_BASE=${shellQuote(llmBaseUrl)}" : ''}
-```
+- Añadidos los parámetros `base_url` y `extra_body` a `run_agent_loop`.
+- Ambos se pasan directamente a `litellm.completion()`.
 
-Quedaría así dentro del bloque shell:
-
-```groovy
-export LLM_MODEL=${shellQuote(resolvedModel)}
-export ${envKeyName}="\${LLM_API_KEY_VALUE}"
-${llmBaseUrl ? "export OPENAI_API_BASE=${shellQuote(llmBaseUrl)}" : ''}
-...
-```
-
----
-
-### Uso en el Jenkinsfile tras el cambio
+### Uso en el Jenkinsfile
 
 ```groovy
 FixWithAI(
-    llmModel:        'openai/deepseek-ai/deepseek-v4-pro',
-    llmCredentialId: 'Nvidia_Api_Token',   // credencial Jenkins con la API key de NVIDIA
-    llmBaseUrl:      'https://integrate.api.nvidia.com/v1',
+    llmModel:        'nvidia/deepseek-ai/deepseek-v4-pro',
+    llmCredentialId: 'Nvidia_Api_Token',
     ...
 )
 ```
 
----
-
-## Nota sobre el parámetro `thinking`
-
-El código de ejemplo de NVIDIA pasa `extra_body={"chat_template_kwargs":{"thinking":False}}` para desactivar la cadena de razonamiento interna del modelo. La librería no transmite ese parámetro.
-
-Sin él, DeepSeek puede devolver bloques `<think>...</think>` en sus respuestas. El agente seguirá funcionando correctamente — litellm filtra o pasa el contenido tal cual — pero si se quisiera suprimir ese output, habría que añadir `extra_body` al `litellm.completion()` de `agent_loop.py`.
+No se necesita ningún parámetro adicional; la URL base y el `extra_body` se gestionan internamente.
 
 ---
 
-## Resumen de cambios
+## El problema del "thinking" y por qué ralentiza el agente
 
-| Fichero | ¿Cambio necesario? | Qué cambiar |
-|---------|--------------------|-------------|
-| `agent_loop.py` | **No** | — |
-| `entrypoint.py` | **No** | — |
-| `env_config.py` | **No** | — |
-| `FixWithAI.groovy` | **Sí** | Parámetro `llmBaseUrl` + export `OPENAI_API_BASE` |
-| `agent_loop.py` (opcional) | Opcional | Añadir `extra_body` para suprimir thinking tokens |
+DeepSeek-V4-Pro es un modelo de razonamiento que por defecto genera una cadena interna de pensamiento (`<think>...</think>`) antes de cada respuesta. Esto puede producir miles de tokens adicionales por iteración — tokens que el agente no necesita y que alargan cada llamada al LLM considerablemente.
+
+La librería desactiva este comportamiento automáticamente cuando detecta NVIDIA como proveedor:
+
+```python
+extra_body = {"thinking": {"type": "disabled"}} if base_url and "nvidia" in base_url else None
+```
+
+Incluso con el thinking desactivado, DeepSeek-V4-Pro demostró ser notablemente más lento que `gemini-2.0-flash` para el volumen de trabajo típico del agente.
+
+---
+
+## Resumen de cambios en el código
+
+| Fichero | Cambio |
+|---------|--------|
+| `FixWithAI.groovy` | Rama `nvidia/` en el detector de proveedores; `AI_BASE_URL` hardcodeada para ese proveedor |
+| `entrypoint.py` | Lee `AI_BASE_URL`; normaliza prefijo del modelo; construye `extra_body`; pasa ambos a `run_agent_loop` |
+| `agent_loop.py` | Parámetros `base_url` y `extra_body` en `run_agent_loop`; ambos pasados a `litellm.completion()` |
