@@ -23,6 +23,7 @@ async def run_agent_loop(
     sonarqube_project_key,
     max_iterations=25,
     dry_run=False,
+    extra_body=None,
 ):
     """Run the agent reasoning loop: LLM decides -> call tool -> observe -> repeat."""
 
@@ -121,7 +122,8 @@ Start by querying SonarQube for open issues in the project."""
                 timeout=300,
                 num_retries=2,
                 user="jenkins-pipeline-agent",
-                base_url=base_url if base_url else None
+                base_url=base_url if base_url else None,
+                extra_body=extra_body if extra_body else None,
             )
         except Exception as e:
             log(f"❌ LLM call failed after retries: {e}")
