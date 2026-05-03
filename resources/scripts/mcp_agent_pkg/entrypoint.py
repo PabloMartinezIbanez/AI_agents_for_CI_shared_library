@@ -40,6 +40,9 @@ async def async_main(
     workspace = os.path.abspath(args.workspace)
     reports_dir = resolve_reports_dir(workspace)
     model = args.model or resolve_env_value("LLM_MODEL") or "gemini/gemini-2.0-flash"
+    _known_prefixes = ("openai/", "anthropic/", "gemini/", "google/", "ollama/", "ollama_chat/", "huggingface/", "cohere/", "mistral/", "groq/")
+    if resolve_env_value("OPENAI_API_BASE") and not any(model.startswith(p) for p in _known_prefixes):
+        model = f"openai/{model}"
     github_token = resolve_env_value("GITHUB_PERSONAL_ACCESS_TOKEN", "Github_AI_Auth")
     sonarqube_url = resolve_env_value("SONARQUBE_URL")
     sonarqube_token = resolve_env_value("SONARQUBE_TOKEN")
