@@ -66,6 +66,7 @@ Start by querying SonarQube for open issues in the project."""
         "seen": False,
         "passed": False,
         "summary": "Tests have not been run yet.",
+        "suite_results": {},  # cumulative per-suite pass/fail across all run_tests calls
     }
 
     protected_repo_tools = {"create_branch", "push_files", "create_pull_request"}
@@ -91,19 +92,19 @@ Start by querying SonarQube for open issues in the project."""
             test_gate["summary"] = "run_tests returned no suite results."
             return
 
-        failed_suites = []
         for suite in results:
-            if not isinstance(suite, dict) or not suite.get("passed", False):
-                suite_name = suite.get("name") if isinstance(suite, dict) else None
-                failed_suites.append(suite_name or "unknown")
+            suite_name = (suite.get("name") if isinstance(suite, dict) else None) or "unknown"
+            test_gate["suite_results"][suite_name] = isinstance(suite, dict) and suite.get("passed", False)
+
+        failed_suites = [name for name, passed in test_gate["suite_results"].items() if not passed]
 
         if failed_suites:
             test_gate["passed"] = False
-            test_gate["summary"] = f"Failing suites: {', '.join(failed_suites)}"
+            test_gate["summary"] = f"Failing suites: {', '.join(sorted(failed_suites))}"
             return
 
         test_gate["passed"] = True
-        test_gate["summary"] = f"All {len(results)} configured suite(s) passed."
+        test_gate["summary"] = f"All {len(test_gate['suite_results'])} configured suite(s) passed."
 
     for iteration in range(1, max_iterations + 1):
         log(f"\n{'─' * 50}")
@@ -248,6 +249,7 @@ Start by querying SonarQube for open issues in the project."""
                 log(f"   🧪 Test gate: {gate_state} ({test_gate['summary']})")
             elif func_name in test_invalidating_tools and status == "ok":
                 test_gate["passed"] = False
+                test_gate["suite_results"] = {}
                 test_gate["summary"] = (
                     "Code changed after last run_tests. Re-run tests to reopen the gate."
                 )
